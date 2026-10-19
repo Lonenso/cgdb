@@ -574,6 +574,23 @@ static void update_file_position(const tgdb_file_position &tfp)
 }
 
 /* This is a list of all the source files */
+// The source list is cached for this session, including file-existence checks.
+// Newly visited disassembly buffers are added whenever the dialog is opened.
+static bool source_dialog_cached = false;
+
+void cgdb_open_source_dialog()
+{
+    if (!source_dialog_cached) {
+        tgdb_request_inferiors_source_files(tgdb);
+        return;
+    }
+    for (list_node *node = if_get_sview()->list_head; node; node = node->next)
+        if (node->path[0] == '*')
+            if_add_filedlg_choice(node->path);
+    if_set_focus(FILE_DLG);
+    kui_input_acceptable = 1;
+}
+
 static void update_source_files(const std::list<std::string> &source_files)
 {
     sviewer *sview = if_get_sview();
@@ -601,6 +618,7 @@ static void update_source_files(const std::list<std::string> &source_files)
         }
 
         if_set_focus(FILE_DLG);
+        source_dialog_cached = true;
     }
     kui_input_acceptable = 1;
 }

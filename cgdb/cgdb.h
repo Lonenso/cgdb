@@ -21,4 +21,6 @@ void cgdb_cleanup_and_exit(int val);
  */
 int run_shell_command(const char *command);
 
+void cgdb_open_source_dialog();
+
 #endif

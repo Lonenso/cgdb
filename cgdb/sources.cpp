@@ -468,7 +468,7 @@ struct sviewer *source_new(SWINDOW *win)
     struct sviewer *rv;
 
     /* Allocate a new structure */
-    rv = (struct sviewer *)cgdb_malloc(sizeof (struct sviewer));
+    rv = new sviewer();
 
     /* Initialize the structure */
     rv->win = win;
@@ -670,6 +670,8 @@ int source_set_mark(struct sviewer *sview, int key)
 
 int source_goto_mark(struct sviewer *sview, int key)
 {
+    if (!sview->cur)
+        return 0;
     int line;
     struct list_node *node = NULL;
 
@@ -692,11 +694,14 @@ int source_goto_mark(struct sviewer *sview, int key)
     }
 
     if (node) {
+        source_record_jump(sview);
         sview->jump_back_mark.line = sview->cur->sel_line;
         sview->jump_back_mark.node = sview->cur;
 
         sview->cur = node;
-        source_set_sel_line(sview, line + 1);
+        node->sel_line = std::max(0, std::min(line,
+            int(node->file_buf.lines.size()) - 1));
+        node->sel_rline = node->sel_line;
         return 1;
     }
 
@@ -850,9 +855,29 @@ int source_display(struct sviewer *sview, int focus,
     lwidth = log10_uint(count) + 1;
     snprintf(fmt, sizeof(fmt), "%%%dd", lwidth);
 
-    for (i = 0; i < height; i++, line++) {
+    const int text_width = std::max(1, width - lwidth - 2);
+    const bool wrap = cgdbrc_get_int(CGDBRC_WRAP);
+    int segment = 0;
+    if (wrap) {
+        // Walk back only as far as the visible window needs.
+        line = sview->cur->sel_line;
+        int rows = height / 2;
+        while (line > 0 && rows > 0) {
+            --line;
+            int length = sview->cur->file_buf.lines[line].line.size();
+            int parts = std::max(1, (length + text_width - 1) / text_width);
+            if (parts > rows) {
+                segment = parts - rows;
+                break;
+            }
+            rows -= parts;
+        }
+    }
+
+    for (i = 0; i < height; i++) {
 
         int column_offset = 0;
+        int text_offset = wrap ? segment * text_width : sview->cur->sel_col;
         /* Is this the current selected line? */
         int is_sel_line = (line >= 0 && sview->cur->sel_line == line);
         /* Is this the current executing line */
@@ -863,12 +888,20 @@ int source_display(struct sviewer *sview, int focus,
 
         if (sline) {
             printline_attrs = sline->attrs;
+            if (is_exe_line && exe_display_style == LINE_DISPLAY_HIGHLIGHT)
+                printline_attrs = exe_highlight_attrs;
+            else if (is_sel_line && !is_exe_line &&
+                    sel_display_style == LINE_DISPLAY_HIGHLIGHT)
+                printline_attrs = sel_highlight_attrs;
         }
 
         swin_wmove(sview->win, i, 0);
 
         /* Print the line number */
-        if (line < 0 || line >= count) {
+        if (wrap && segment > 0) {
+            for (int j = 0; j < lwidth; ++j)
+                swin_waddch(sview->win, ' ');
+        } else if (line < 0 || line >= count) {
             for (int j = 1; j < lwidth; j++)
                 swin_waddch(sview->win, ' ');
             swin_waddch(sview->win, '~');
@@ -893,15 +926,6 @@ int source_display(struct sviewer *sview, int focus,
             swin_wattron(sview->win, line_attr);
             swin_wprintw(sview->win, fmt, line + 1);
             swin_wattroff(sview->win, line_attr);
-        }
-
-        if (!swin_has_colors()) {
-            /* TODO:
-            swin_wprintw(sview->win, "%.*s\n",
-                    sview->cur->file_buf.lines[line].line,
-                    sview->cur->file_buf.lines[line].len);
-            */
-            continue;
         }
 
         /* Print the vertical bar or mark */
@@ -931,7 +955,7 @@ int source_display(struct sviewer *sview, int focus,
         }
 
         /* Print the marker */
-        if (is_exe_line || is_sel_line) {
+        if ((is_exe_line || is_sel_line) && (!wrap || segment == 0)) {
             enum LineDisplayStyle display_style;
             int arrow_attr, block_attr;
             std::vector<hl_line_attr> highlight_attr;
@@ -958,7 +982,8 @@ int source_display(struct sviewer *sview, int focus,
                     swin_wattron(sview->win, arrow_attr);
                     column_offset = get_line_leading_ws_count(
                         sline->line.data(), sline->line.size());
-                    column_offset -= (sview->cur->sel_col + 1);
+                    column_offset -= (text_offset + 1);
+                    column_offset = std::min(column_offset, text_width - 1);
                     if (column_offset < 0)
                         column_offset = 0;
 
@@ -977,7 +1002,8 @@ int source_display(struct sviewer *sview, int focus,
                 case LINE_DISPLAY_BLOCK:
                     column_offset = get_line_leading_ws_count(
                         sline->line.data(), sline->line.size());
-                    column_offset -= (sview->cur->sel_col + 1);
+                    column_offset -= (text_offset + 1);
+                    column_offset = std::min(column_offset, text_width - 1);
                     if (column_offset < 0)
                         column_offset = 0;
 
@@ -1006,8 +1032,8 @@ int source_display(struct sviewer *sview, int focus,
             x = swin_getcurx(sview->win);
 
             hl_printline(sview->win, sline->line.data(), sline->line.size(),
-                printline_attrs, -1, -1, sview->cur->sel_col + column_offset,
-                width - lwidth - 2);
+                printline_attrs, -1, -1, text_offset + column_offset,
+                text_width - column_offset);
 
             // if highlight search is on
             //   display the last successful search
@@ -1018,8 +1044,8 @@ int source_display(struct sviewer *sview, int focus,
                 if (attrs.size() > 0) {
                     hl_printline_highlight(sview->win, sline->line.data(),
                         sline->line.size(), attrs, x, y,
-                        sview->cur->sel_col + column_offset,
-                        width - lwidth - 2);
+                        text_offset + column_offset,
+                        text_width - column_offset);
                 }
             }
 
@@ -1031,8 +1057,8 @@ int source_display(struct sviewer *sview, int focus,
                 if (attrs.size() > 0) {
                     hl_printline_highlight(sview->win, sline->line.data(),
                         sline->line.size(), attrs, x, y,
-                        sview->cur->sel_col + column_offset,
-                        width - lwidth - 2);
+                        text_offset + column_offset,
+                        text_width - column_offset);
                 }
             }
 
@@ -1045,10 +1071,16 @@ int source_display(struct sviewer *sview, int focus,
                 if (attrs.size() > 0) {
                     hl_printline_highlight(sview->win, sline->line.data(),
                         sline->line.size(), attrs, x, y,
-                        sview->cur->sel_col + column_offset,
-                        width - lwidth - 2);
+                        text_offset + column_offset,
+                        text_width - column_offset);
                 }
             }
+        }
+        if (wrap && sline && (segment + 1) * text_width < sline->line.size()) {
+            ++segment;
+        } else {
+            ++line;
+            segment = 0;
         }
     }
 
@@ -1090,6 +1122,8 @@ void source_vscroll(struct sviewer *sview, int offset)
 
 void source_hscroll(struct sviewer *sview, int offset)
 {
+    if (cgdbrc_get_int(CGDBRC_WRAP))
+        return;
     int lwidth;
     int max_width;
     int width, height;
@@ -1112,13 +1146,11 @@ void source_hscroll(struct sviewer *sview, int offset)
 void source_set_sel_line(struct sviewer *sview, int line)
 {
     if (sview->cur) {
-        if (line == -1) {
-            sview->cur->sel_line = sview->cur->file_buf.lines.size() - 1;
-        } else {
-            /* Set line (note correction for 0-based line counting) */
-            sview->cur->sel_line = clamp_line(sview, line - 1);
-        }
-
+        int target = line == -1 ? sview->cur->file_buf.lines.size() - 1 :
+            clamp_line(sview, line - 1);
+        if (target != sview->cur->sel_line)
+            source_record_jump(sview);
+        sview->cur->sel_line = target;
         sview->cur->sel_rline = sview->cur->sel_line;
     }
 }
@@ -1155,21 +1187,70 @@ static struct list_node *source_get_asmnode(struct sviewer *sview,
     return node;
 }
 
+void source_record_jump(struct sviewer *sview)
+{
+    if (!sview->cur)
+        return;
+    source_position pos = {sview->cur->path, sview->cur->sel_line,
+        sview->cur->sel_col};
+    sview->jumps.resize(sview->jump_index);
+    if (sview->jumps.empty() || sview->jumps.back().path != pos.path ||
+            sview->jumps.back().line != pos.line ||
+            sview->jumps.back().column != pos.column)
+        sview->jumps.push_back(pos);
+    // Keep debugger stepping from growing the history indefinitely.
+    if (sview->jumps.size() > 100)
+        sview->jumps.erase(sview->jumps.begin());
+    sview->jump_index = sview->jumps.size();
+}
+
+void source_jump_history(struct sviewer *sview, int direction)
+{
+    if (!sview->cur || sview->jumps.empty())
+        return;
+    if (direction < 0 && sview->jump_index == sview->jumps.size()) {
+        source_record_jump(sview);
+        sview->jump_index = sview->jumps.size() - 1;
+    }
+    if ((direction < 0 && sview->jump_index == 0) ||
+            (direction > 0 && sview->jump_index + 1 >= sview->jumps.size()))
+        return;
+    size_t index = sview->jump_index + direction;
+    const source_position &pos = sview->jumps[index];
+    list_node *node = source_get_node(sview, pos.path.c_str());
+    if (!node)
+        node = source_add(sview, pos.path.c_str());
+    if (!node || load_file(node))
+        return;
+    sview->cur = node;
+    node->sel_line = clamp_line(sview, pos.line);
+    node->sel_rline = node->sel_line;
+    node->sel_col = pos.column;
+    sview->jump_index = index;
+}
+
 int source_set_exec_line(struct sviewer *sview, const char *path, int sel_line, int exe_line)
 {
+    list_node *previous = sview->cur;
     if (path) {
         /* If they passed us a path, try to locate that node */
-        sview->cur = source_get_node(sview, path);
+        list_node *node = source_get_node(sview, path);
 
         /* Not found.... */
-        if (!sview->cur) {
+        if (!node) {
             /* Check that the file exists */
             if (!fs_verify_file_exists(path))
                 return 5;
 
             /* Add a new node for this file */
-            sview->cur = source_add(sview, path);
+            node = source_add(sview, path);
         }
+        if (load_file(node))
+            return 4;
+        if (node != previous || (sel_line > 0 && previous &&
+                    previous->sel_line != sel_line - 1))
+            source_record_jump(sview);
+        sview->cur = node;
     }
 
     /* Buffer the file if it's not already */
@@ -1199,10 +1280,13 @@ int source_set_exec_addr(struct sviewer *sview, uint64_t addr)
         addr = sview->addr_frame;
 
     /* Search for a node which contains this address */
-    sview->cur = source_get_asmnode(sview, addr, &line);
-    if (!sview->cur)
+    list_node *node = source_get_asmnode(sview, addr, &line);
+    if (!node)
         return -1;
 
+    if (node != sview->cur || node->sel_line != line)
+        source_record_jump(sview);
+    sview->cur = node;
     sview->cur->sel_line = clamp_line(sview, line);
     sview->cur->exe_line = clamp_line(sview, line);
     return 0;
@@ -1222,7 +1306,7 @@ void source_free(struct sviewer *sview)
     swin_delwin(sview->win);
     sview->win = NULL;
 
-    free(sview);
+    delete sview;
 }
 
 void source_search_regex_init(struct sviewer *sview)
@@ -1282,6 +1366,10 @@ int source_search_regex(struct sviewer *sview,
             ret = hl_regex_search(&sview->hlregex, line_str, regex, icase, &start, &end);
             if (ret > 0) {
                 /* Got a match */
+                if (opt == 2 && line != node->sel_rline) {
+                    node->sel_line = node->sel_rline;
+                    source_record_jump(sview);
+                }
                 node->sel_line = line;
 
                 /* Finalized match - move to this location */

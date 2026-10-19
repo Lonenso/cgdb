@@ -1198,6 +1198,14 @@ toggle_breakpoint(struct sviewer *sview, enum tgdb_breakpoint_action t)
 static void source_input(struct sviewer *sview, int key)
 {
     switch (key) {
+        case CGDB_KEY_CTRL_O:
+        case CGDB_KEY_CTRL_I: {
+            int count = 1;
+            cgdb_string_to_int(G_line_number.c_str(), &count);
+            while (count-- > 0)
+                source_jump_history(sview, key == CGDB_KEY_CTRL_O ? -1 : 1);
+            break;
+        }
         case CGDB_KEY_UP:
         case 'k': {             /* VI-style up-arrow */
             int lineno = 1;
@@ -1265,7 +1273,7 @@ static void source_input(struct sviewer *sview, int key)
 
             kui_input_acceptable = 0;
 
-            tgdb_request_inferiors_source_files(tgdb);
+            cgdb_open_source_dialog();
         }
             break;
         case ' ':

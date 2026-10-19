@@ -251,6 +251,10 @@ void cgdbrc_init_config_options(void)
     option.variant.win_split_orientation_val = WSO_HORIZONTAL;
     cgdbrc_config_options[i++] = option;
 
+    option.option_kind = CGDBRC_WRAP;
+    option.variant.int_val = 0;
+    cgdbrc_config_options[i++] = option;
+
     option.option_kind = CGDBRC_WRAPSCAN;
     option.variant.int_val = 1;
     cgdbrc_config_options[i++] = option;
@@ -379,6 +383,9 @@ void cgdbrc_init_config_variables(void)
     cgdbrc_variables.push_back(ConfigVariable(
         "winsplitorientation", "wso", CONFIG_TYPE_FUNC_STRING,
         (void *)command_set_winsplitorientation));
+    cgdbrc_variables.push_back(ConfigVariable(
+        "wrap", "wrap", CONFIG_TYPE_BOOL,
+        (void *)&cgdbrc_config_options[CGDBRC_WRAP].variant.int_val));
     /* wrapscan */
     cgdbrc_variables.push_back(ConfigVariable(
         "wrapscan", "ws", CONFIG_TYPE_BOOL,

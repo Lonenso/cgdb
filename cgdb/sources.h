@@ -41,6 +41,12 @@ struct sviewer_mark {
     int line;
 };
 
+struct source_position {
+    std::string path;
+    int line;
+    int column;
+};
+
 /* Source viewer object */
 struct sviewer {
     struct list_node *list_head;           /* File list */
@@ -48,6 +54,9 @@ struct sviewer {
     struct list_node *cur_exe;             /* Current node we're executing */
     sviewer_mark global_marks[MARK_COUNT]; /* Global A-Z marks */
     sviewer_mark jump_back_mark;           /* Location where last jump occurred from */
+    std::vector<source_position> jumps;
+    // jumps.size() denotes the live position, not yet saved in the history.
+    size_t jump_index = 0;
 
     SWINDOW *win;                          /* Curses window */
     uint64_t addr_frame;                   /* Current frame address 
@@ -218,6 +227,8 @@ void source_hscroll(struct sviewer *sview, int offset);
  *
  */
 void source_set_sel_line(struct sviewer *sview, int line);
+void source_record_jump(struct sviewer *sview);
+void source_jump_history(struct sviewer *sview, int direction);
 
 /* source_set_exec_line:  Set currently selected line and executing line
  * ---------------

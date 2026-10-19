@@ -414,6 +414,14 @@ Grow source window 25%
 @item Ctrl-l
 Clear and redraw the screen.
 
+@item Ctrl-o
+Jump to an older source location. File changes, line jumps, marks and
+completed searches add locations to the jump history (up to 100 locations).
+A count repeats the jump.
+
+@item Ctrl-i
+Jump to a newer source location. Tab sends the same key in a terminal.
+
 @item F5
 Send a run command to GDB.
 
@@ -802,6 +810,14 @@ hich places the source window on the left and the GDB window on the right).
 @item :set ws
 @itemx :set wrapscan
 Searches wrap around the end of file.  The default is on.
+
+@item :set wrap
+Wrap long source lines at the window edge, preserving source line numbers.
+Vertical movement operates on source lines. Horizontal scrolling is disabled
+while wrapping is enabled.
+
+@item :set nowrap
+Display source lines without wrapping (the default).
 
 @item :c
 @itemx :continue

@@ -11,6 +11,8 @@
 #endif /* HAVE_STRING_H */
 
 #include <string>
+#include <algorithm>
+#include <unordered_set>
 
 #include "fs_util.h"
 
@@ -36,6 +38,9 @@ struct file_buffer {
 };
 
 struct filedlg {
+    std::unordered_set<std::string> seen;
+    bool needs_sort = false;
+    std::string selected_before_sort;
     struct file_buffer *buf;    /* All of the widget's data ( files ) */
     struct hl_regex_info *last_hlregex;
     struct hl_regex_info *hlregex;
@@ -123,11 +128,12 @@ void filedlg_free(struct filedlg *fdlg)
 int filedlg_add_file_choice(struct filedlg *fd, const char *file_choice)
 {
     int length;
-    int index, i;
-    int equal = 1;              /* Not set to 0, because 0 *is* equal */
 
     if (file_choice == NULL || *file_choice == '\0')
         return -1;
+
+    if (!fd->seen.insert(file_choice).second)
+        return -3;
 
     /* Make sure file exists. If temp files are used to create an
      * executable, and the temp files are deleted, they pollute the
@@ -141,47 +147,10 @@ int filedlg_add_file_choice(struct filedlg *fd, const char *file_choice)
             return -4;
     }
 
-    /* find index to insert by comparing:
-     * Absolute paths go to the end
-     * Relative paths go before the absolute paths 
-     */
-    for (i = 0; i < sbcount(fd->buf->files); i++) {
-        /* Don't add duplicate entry's ... gdb outputs duplicates */
-        if ((equal = strcmp(fd->buf->files[i], file_choice)) == 0)
-            return -3;
-        else if (equal < 0) {
-            /* Inserting filename, stop before relative path */
-            if ((file_choice[0] != '.' && file_choice[0] != '/')
-                    && fd->buf->files[i][0] == '.')
-                break;
-
-            /* Inserting filename, stop before absolute path */
-            if (file_choice[0] != '/' && fd->buf->files[i][0] == '/')
-                break;
-
-        } else if (equal > 0) { /* Found ( file_choice is greater ) */
-            /* Inserting Absolute path, it goes to the end */
-            if (file_choice[0] == '/' && fd->buf->files[i][0] != '/')
-                continue;
-
-            /* Inserting relative path, continue until before absolute or relative path */
-            if (file_choice[0] == '.' && (fd->buf->files[i][0] != '.'
-                            && fd->buf->files[i][0] != '/'))
-                continue;
-
-            break;
-        }
-    }
-
-    index = i;
-
-    sbpush(fd->buf->files, NULL);
-
-    /* shift everything down and then insert into index */
-    for (i = sbcount(fd->buf->files) - 1; i > index; i--)
-        fd->buf->files[i] = fd->buf->files[i - 1];
-
-    fd->buf->files[index] = cgdb_strdup(file_choice);
+    if (!fd->needs_sort && sbcount(fd->buf->files) > 0)
+        fd->selected_before_sort = fd->buf->files[fd->buf->sel_line];
+    sbpush(fd->buf->files, cgdb_strdup(file_choice));
+    fd->needs_sort = true;
 
     if ((length = strlen(file_choice)) > fd->buf->max_width)
         fd->buf->max_width = length;
@@ -191,6 +160,9 @@ int filedlg_add_file_choice(struct filedlg *fd, const char *file_choice)
 
 void filedlg_clear(struct filedlg *fd)
 {
+    fd->seen.clear();
+    fd->needs_sort = false;
+    fd->selected_before_sort.clear();
     int i;
 
     fd->G_line_number.clear();
@@ -328,6 +300,19 @@ static int filedlg_search_regex(struct filedlg *fd, const char *regex,
 
 int filedlg_display(struct filedlg *fd)
 {
+    if (fd->needs_sort) {
+        std::sort(fd->buf->files, fd->buf->files + sbcount(fd->buf->files),
+            [](const char *a, const char *b) {
+                int arank = a[0] == '/' ? 2 : a[0] == '.' ? 1 : 0;
+                int brank = b[0] == '/' ? 2 : b[0] == '.' ? 1 : 0;
+                return arank != brank ? arank < brank : strcmp(a, b) < 0;
+            });
+        for (int i = 0; i < sbcount(fd->buf->files); ++i)
+            if (fd->selected_before_sort == fd->buf->files[i])
+                fd->buf->sel_line = fd->buf->sel_rline = i;
+        fd->selected_before_sort.clear();
+        fd->needs_sort = false;
+    }
     char fmt[16];
     int width, height;
     int lwidth;

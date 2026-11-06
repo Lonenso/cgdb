@@ -574,7 +574,8 @@ static void update_file_position(const tgdb_file_position &tfp)
 }
 
 /* This is a list of all the source files */
-// The source list is cached for this session, including file-existence checks.
+// The source list and sorted dialog are cached for this session.
+// File existence is checked only when selecting a source file.
 // Newly visited disassembly buffers are added whenever the dialog is opened.
 static bool source_dialog_cached = false;
 

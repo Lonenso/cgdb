@@ -388,7 +388,11 @@ next forward search.
 next reverse search.
 
 @item o
-open the file dialog.
+Open the file dialog. The sorted source list is cached for the session,
+and reopening the dialog preserves the selected file. File existence is
+checked when a file is selected, so unavailable paths can appear in the list;
+selecting one displays an error and leaves the dialog open. Newly visited
+disassembly buffers are added when the dialog is reopened.
 
 @item spacebar
 Sets a breakpoint at the current line number.

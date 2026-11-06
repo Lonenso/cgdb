@@ -135,17 +135,9 @@ int filedlg_add_file_choice(struct filedlg *fd, const char *file_choice)
     if (!fd->seen.insert(file_choice).second)
         return -3;
 
-    /* Make sure file exists. If temp files are used to create an
-     * executable, and the temp files are deleted, they pollute the
-     * file open dialog with files you can't actually open.
-     *
-     * The downside to not showing them all is that a user might
-     * not understand why certain files aren't showing up. O well.
+    /* Defer filesystem checks until selection.  Probing every source path
+     * can dominate opening a large source list, especially on network mounts.
      */
-    if (file_choice[0] != '*') {
-        if (fs_verify_file_exists(file_choice) == 0)
-            return -4;
-    }
 
     if (!fd->needs_sort && sbcount(fd->buf->files) > 0)
         fd->selected_before_sort = fd->buf->files[fd->buf->sel_line];
@@ -626,6 +618,15 @@ int filedlg_recv_char(struct filedlg *fd, int key, char *file, int last_key_pres
         case '\n':
         case '\r':
         case CGDB_KEY_CTRL_M:
+            if (fd->buf->sel_line < 0 ||
+                    fd->buf->sel_line >= sbcount(fd->buf->files))
+                return 0;
+            if (fd->buf->files[fd->buf->sel_line][0] != '*' &&
+                    !fs_verify_file_exists(fd->buf->files[fd->buf->sel_line])) {
+                static char message[] = "Source file does not exist";
+                filedlg_display_message(fd, message);
+                return 0;
+            }
             strcpy(file, fd->buf->files[fd->buf->sel_line]);
             return 1;
 

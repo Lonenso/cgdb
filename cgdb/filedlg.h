@@ -26,6 +26,8 @@ void filedlg_free(struct filedlg *fdlg);
  * -----------
  *
  * file_choice: A path to a file that the user will be able to choose from.
+ * Duplicate paths are ignored. Sorting is deferred until display, and file
+ * existence is checked on selection rather than while building the list.
  *
  * Return Value:  Zero on success, non-zero on error.
  */

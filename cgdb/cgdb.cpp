@@ -105,6 +105,7 @@ static int gdb_console_fd = -1; /* GDB console descriptor */
 static int gdb_mi_fd = -1;      /* GDB Machine Interface descriptor */
 static bool new_ui_unsupported = false;
 
+static bool native_gdb = false;
 static char *debugger_path = NULL;  /* Path to debugger to use */
 
 /* Set to 1 if the user requested cgdb to wait for the debugger to attach. */
@@ -211,8 +212,12 @@ int run_shell_command(const char *command)
     while (fgetc(stdin) != '\n') {
     }
 
-    /* Turn off echo and put the terminal back into raw mode */
-    tty_cbreak(STDIN_FILENO, &term_attributes);
+    /* Resume curses before syncing: its first update can reload a stale
+     * console size, and the terminal may have changed while in the shell. */
+    swin_refresh();
+    struct termios resumed_attributes;
+    tty_cbreak(STDIN_FILENO, &resumed_attributes);
+    if_resize_term();
     if_draw();
 
     return rv;
@@ -254,6 +259,9 @@ static void parse_long_options(int *argc, char ***argv)
     static struct option long_options[] = {
         {"version", 0, 0, 0},
         {"help", 0, 0, 0},
+#ifdef HAVE_MSYS_CONSOLE_HOST
+        {"native-gdb", 0, 0, 1000},
+#endif
         {0, 0, 0, 0}
     };
 #endif
@@ -283,6 +291,10 @@ static void parse_long_options(int *argc, char ***argv)
                     default:
                         break;
                 }
+                break;
+            case 1000:
+                native_gdb = true;
+                n++;
                 break;
             case 'v':
                 printf("%s", version_info());
@@ -405,7 +417,7 @@ static int start_gdb(int argc, char *argv[])
     // Note, the 40 height by 80 width size here will be overriden
     // once cgdb determines the actual size. This is done in main() in
     // the call to if_layout just after if_init.
-    return tgdb_start_gdb(tgdb, debugger_path, argc, argv, get_gdb_height(),
+    return tgdb_start_gdb(tgdb, debugger_path, native_gdb, argc, argv, get_gdb_height(),
             get_gdb_width(), &gdb_console_fd, &gdb_mi_fd);
 }
 
@@ -575,7 +587,7 @@ static void update_file_position(const tgdb_file_position &tfp)
 
 /* This is a list of all the source files */
 // The source list and sorted dialog are cached for this session.
-// File existence is checked only when selecting a source file.
+// Missing files are filtered when the cache is populated, and rechecked on selection.
 // Newly visited disassembly buffers are added whenever the dialog is opened.
 static bool source_dialog_cached = false;
 
@@ -596,7 +608,7 @@ static void update_source_files(const std::list<std::string> &source_files)
 {
     sviewer *sview = if_get_sview();
     struct list_node *cur;
-    int added_disasm = 0;
+    int added_files = 0;
 
     if_clear_filedlg();
 
@@ -604,20 +616,20 @@ static void update_source_files(const std::list<std::string> &source_files)
     for (cur = sview->list_head; cur != NULL; cur = cur->next) {
         if (cur->path[0] == '*')
         {
-            added_disasm = 1;
-            if_add_filedlg_choice(cur->path);
+            if (if_add_filedlg_choice(cur->path) == 0)
+                ++added_files;
         }
     }
 
-    if (source_files.size() == 0 && !added_disasm) {
-        /* No files returned? */
-        if_display_message(WIN_REFRESH, "Error:",
-            " No sources available! Was the program compiled with debug?");
-    } else {
-        for (auto iter : source_files) {
-            if_add_filedlg_choice(iter);
-        }
+    for (const auto &path : source_files) {
+        if (if_add_filedlg_choice(path) == 0)
+            ++added_files;
+    }
 
+    if (added_files == 0) {
+        if_display_message(WIN_REFRESH, "Error:",
+            " No local source files available. Check debug info and GDB source mappings.");
+    } else {
         if_set_focus(FILE_DLG);
         source_dialog_cached = true;
     }
@@ -973,9 +985,23 @@ void cgdb_cleanup_and_exit(int val)
     exit(val);
 }
 
+static int create_signal_pipe(int fds[2])
+{
+    if (pipe(fds) == -1) return -1;
+    if (fcntl(fds[0], F_SETFD, FD_CLOEXEC) == -1 ||
+            fcntl(fds[1], F_SETFD, FD_CLOEXEC) == -1) {
+        int error = errno;
+        close(fds[0]); close(fds[1]);
+        fds[0] = fds[1] = -1;
+        errno = error;
+        return -1;
+    }
+    return 0;
+}
+
 int init_resize_pipe(void)
 {
-    if (pipe(resize_pipe) == -1) {
+    if (create_signal_pipe(resize_pipe) == -1) {
         clog_error(CLOG_CGDB, "pipe error");
         return -1;
     }
@@ -985,7 +1011,7 @@ int init_resize_pipe(void)
 
 int init_signal_pipe(void)
 {
-    int result = pipe(signal_pipe);
+    int result = create_signal_pipe(signal_pipe);
 
     if (result == -1) {
         clog_error(CLOG_CGDB, "pipe error");
@@ -1174,6 +1200,13 @@ int main(int argc, char *argv[])
     */
     parse_cgdbrc_file();
 
+    /* if_init installs signal handlers. Their pipes must exist before a
+       debugger can exit during startup, or a resize can arrive. */
+    if (init_resize_pipe() == -1 || init_signal_pipe() == -1) {
+        clog_error(CLOG_CGDB, "initializing signal pipes failed");
+        cgdb_cleanup_and_exit(-1);
+    }
+
     /* Initialize the display */
     if (if_init() == -1)
     {
@@ -1185,18 +1218,6 @@ int main(int argc, char *argv[])
 
     // Starting gdb after the height/width of the gdb window has been decided 
     if (start_gdb(argc, argv) == -1) {
-        cgdb_cleanup_and_exit(-1);
-    }
-
-    /* Initialize the pipe that is used for resize */
-    if (init_resize_pipe() == -1) {
-        clog_error(CLOG_CGDB, "init_resize_pipe error");
-        cgdb_cleanup_and_exit(-1);
-    }
-
-    /* Initialize the pipe that is used for signals */
-    if (init_signal_pipe() == -1) {
-        clog_error(CLOG_CGDB, "init_signal_pipe error");
         cgdb_cleanup_and_exit(-1);
     }
 

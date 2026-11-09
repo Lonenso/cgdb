@@ -407,6 +407,9 @@
     // The path to the desired debugger to use.
     // If this is NULL, then just "gdb" is used.
     //
+    // @param native_gdb
+    // Use Windows named-pipe MI and an owned ConPTY (MSYS builds only).
+    //
     // @param argc
     // The number of arguments to pass to the debugger
     //
@@ -425,7 +428,7 @@
     // @param gdb_mi_fd
     // The gdb machine interface file descriptor
     int tgdb_start_gdb(struct tgdb *tgdb,
-            const char *debugger, int argc, char **argv,
+            const char *debugger, bool native_gdb, int argc, char **argv,
             int gdb_win_rows, int gdb_win_cols, int *gdb_console_fd,
             int *gdb_mi_fd);
 
@@ -461,6 +464,13 @@
      * 0 on sucess, or -1 on error
      */
     int tgdb_send_char(struct tgdb *tgdb, char c);
+
+    /**
+     * Return a terminal protocol reply directly to the GDB console PTY.
+     * Bypass the command queue: the inferior/runtime may be waiting for it
+     * while GDB is running. Returns 0 on success, -1 on write error.
+     */
+    int tgdb_send_console_reply(struct tgdb *tgdb, const char *bytes, size_t len);
 
     /**
      * Resize the gdb console.

@@ -1,0 +1,79 @@
+# Manual MSYS2 integration regression:
+#   /ucrt64/bin/g++ -g -O0 msys-stdout.cpp -o msys-stdout.exe
+#   expect msys-stdout.exp /path/to/cgdb /path/to/gdb /path/to/msys-stdout.exe
+# GDB must be the MSYS build; the test program must be a native UCRT64 build.
+# No fflush, endl, unitbuf or setvbuf is used.
+set timeout 30
+if {$argc < 3 || $argc > 4} { puts stderr "Usage: $argv0 CGDB GDB PROGRAM ?input?"; exit 2 }
+set check_input [expr {$argc == 4 && [lindex $argv 3] eq "input"}]
+if {![info exists env(TERM)]} { set env(TERM) screen-256color }
+proc need {pattern} {
+    expect {
+        -re $pattern {}
+        timeout { puts stderr "FAIL: waiting for $pattern"; exit 1 }
+        eof { puts stderr "FAIL: EOF waiting for $pattern"; exit 1 }
+    }
+}
+# ConPTY/curses may interleave cursor moves between output characters.
+proc need_text {text} {
+    set pattern ""
+    foreach ch [split $text ""] {
+        append pattern $ch {(?:\x1b\[[0-?]*[ -/]*[@-~]|\r|\n)*}
+    }
+    need $pattern
+}
+spawn [lindex $argv 0] -d [lindex $argv 1] -nx -q [lindex $argv 2]
+need {\(gdb\)}
+send "set pagination off\r"
+need {\(gdb\)}
+send "set confirm off\r"
+need {\(gdb\)}
+send "set auto-load python-scripts off\r"
+need {\(gdb\)}
+send "break checkpoint\r"
+need {Breakpoint 1 at}
+after 500
+# Repeat to exercise ConPTY teardown and setup in one debugger session.
+foreach iteration {1 2} {
+    if {$check_input} {send "run\r"} else {send "run output\r"}
+    need_text CONSOLE_1
+    need_text FPRINTF_101
+    need {checkpoint \(n=1\)}
+    after 500
+    # Return to main, then execute the cout statement with actual next.
+    send "finish\r"
+    need {main \(}
+    after 500
+    send "next\r"
+    need_text CPP_202
+    after 500
+    send "next\r"
+    need {checkpoint}
+    after 500
+    send "p n\r"
+    need {= 2}
+    after 300
+    send "continue\r"
+    if {$check_input} {
+        need_text INPUT_READY
+        send "37\r"
+        need_text READ_37
+        after 500
+        send "p n\r"
+        need {= 3}
+        after 300
+        send "continue\r"
+    }
+    need {exited normally}
+    after 500
+}
+send "run spin\r"
+need_text INTERRUPT_READY
+send "\003"
+need {SIGINT}
+after 500
+send "quit\r"
+expect eof
+set result [wait]
+if {[lindex $result 3] != 0} { puts stderr "FAIL: CGDB exit"; exit 1 }
+puts "PASS: stdout fprintf/cout, next, repeated run and Ctrl-C (stdin checked: $check_input)"

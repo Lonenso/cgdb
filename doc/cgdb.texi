@@ -122,6 +122,17 @@ type @kbd{:quit} in the source window to exit.  This even works if GDB is
 currently hanging, or operating a long command.
 @end itemize
 
+On MSYS2, the experimental @option{--native-gdb} option connects a native
+Windows GDB through a named-pipe MI channel and a separately managed ConPTY.
+For example: @samp{cgdb --native-gdb -d /path/to/patched-ucrt64/gdb.exe program.exe}.
+This requires the Windows @code{new-ui} fixes shipped with this implementation;
+an unpatched UCRT64 GDB is not sufficient. The adjacent
+@file{cgdb-console-host.exe} must come from the same build. Without this option,
+CGDB continues to use its existing MSYS GDB backend.
+
+Relocatable packages may set @env{CGDB_DATA_DIR} to the directory containing
+@file{cgdb.txt}. Otherwise the configured installation data directory is used.
+
 @node Understanding CGDB
 @chapter Understanding the core concepts of CGDB
 @cindex understanding CGDB

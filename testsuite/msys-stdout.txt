@@ -1,0 +1,37 @@
+Native MSYS2 stdout regression (manual)
+=======================================
+Build CGDB with an MSYS compiler and its native helper with MinGW:
+  ./configure --build=x86_64-pc-msys --host=x86_64-pc-msys NATIVE_CC=/ucrt64/bin/gcc
+  make
+  make install
+Keep cgdb-console-host.exe next to cgdb.exe, including after relocation.
+The helper has no MSYS or Python dependency. It starts the existing /usr/bin/bash
+and the selected GDB in the host MSYS installation; -d and PATH still select GDB.
+No GDB changes or terminal dimensions are hardcoded.
+
+Build the test program using the UCRT64 compiler:
+  /ucrt64/bin/g++ -g -O0 msys-stdout.cpp -o msys-stdout.exe
+Run from an MSYS shell with MSYS GDB:
+  expect msys-stdout.exp /path/to/cgdb /path/to/gdb /path/to/msys-stdout.exe input
+
+The test uses FILE *fp = stdout and fprintf(fp, "...\n"), plus cout with a
+newline. It does not flush output explicitly. It verifies console handles,
+output before breakpoints, actual next, two runs, fgets input, and Ctrl-C.
+The optional fourth argument "input" enables the fgets check.
+
+Why the console helper is needed
+-------------------------------
+Returning terminal replies enables MSYS ConPTY. With GDB itself attached to
+an MSYS PTY, opening another PTY for new-ui mi can then break inferior input.
+This reproduces without CGDB on MSYS runtimes 3.6.4 and 3.6.12.
+The native helper establishes the console before GDB opens its secondary UI,
+so GDB and native inferiors inherit console handles. It stays alive across
+runs and forwards the child exit code. A Windows job cleans up child processes
+if the helper is terminated. GDB still handles Ctrl-C.
+
+MSYS=disable_pcon opts out of ConPTY and restores pipe-buffered native stdout.
+The runtime console helper must be installed for ConPTY; it is part of the
+host MSYS2 runtime package. cgdb-console-host.exe does not replace it.
+
+This test is manual because it requires Windows, MSYS2, and a native UCRT64
+compiler. The existing portable DejaGNU test suite remains separate.

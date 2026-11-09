@@ -22,6 +22,9 @@ void usage(void)
 #else
             "   -h          Print help (this message) and then exit.\n"
 #endif
+#ifdef HAVE_MSYS_CONSOLE_HOST
+            "   --native-gdb Use Windows named-pipe MI for a native Windows GDB.\n"
+#endif
             "   -d          Set debugger to use.\n"
             "   -w          Wait for debugger to attach before starting.\n"
             "   --          Marks the end of CGDB's options.\n");

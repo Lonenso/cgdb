@@ -181,6 +181,9 @@ VTerminal::VTerminal(VTerminalOptions options_p) : vt(nullptr)
     // Create vterm
     vt = vterm_new(options.height, options.width);
     vterm_set_utf8(vt, 1);
+    // libvterm generates replies to DSR and other terminal queries. Return
+    // them to this terminal's PTY, not to the user's outer terminal.
+    vterm_output_set_callback(vt, options.write_reply, options.reply_data);
 
 #if 0
     // Setup state

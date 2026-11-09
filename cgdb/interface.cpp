@@ -585,6 +585,11 @@ static void validate_window_sizes(void)
         window_shift = min_window_size_shift;
 }
 
+static void terminal_reply(const char *bytes, size_t len, void *context)
+{
+    tgdb_send_console_reply(static_cast<struct tgdb *>(context), bytes, len);
+}
+
 int if_layout()
 {
     SWINDOW *gdb_scroller_win = NULL;
@@ -610,7 +615,7 @@ int if_layout()
     if (gdb_scroller) {
         scr_move(gdb_scroller, gdb_scroller_win);
     } else {
-        gdb_scroller = scr_new(gdb_scroller_win);
+        gdb_scroller = scr_new(gdb_scroller_win, terminal_reply, tgdb);
     }
 
     /* Initialize the status bar window */
@@ -623,22 +628,31 @@ int if_layout()
     return 0;
 }
 
-/* if_resize_term: Checks if a resize event occurred, and updates display if so.
- * ----------
- *
- * Return Value:  Zero on success, non-zero on failure.
- */
+/* Keep curses and the layout on the same valid terminal dimensions. */
+static bool sync_terminal_size(void)
+{
+    struct winsize size = {};
+    if (ioctl(fileno(stdout), TIOCGWINSZ, &size) == -1 ||
+            size.ws_row == 0 || size.ws_col == 0)
+        return false;
+
+    /* The console and curses can initially report different sizes (notably
+     * over Windows OpenSSH). Synchronize before creating any layout windows,
+     * rather than waiting for the first SIGWINCH to repair the clipped view. */
+    if (size.ws_row != swin_lines() || size.ws_col != swin_cols()) {
+        if (swin_resizeterm(size.ws_row, size.ws_col) != 0)
+            return false;
+        swin_refresh();
+    }
+
+    screen_size = size;
+    return true;
+}
+
 int if_resize_term(void)
 {
-    if (ioctl(fileno(stdout), TIOCGWINSZ, &screen_size) != -1) {
-        if (screen_size.ws_row != swin_lines() ||
-                screen_size.ws_col != swin_cols()) {
-            swin_resizeterm(screen_size.ws_row, screen_size.ws_col);
-            swin_refresh();
-        }
-
+    if (sync_terminal_size())
         return if_layout();
-    }
 
     return 0;
 }
@@ -1366,10 +1380,9 @@ int if_init(void)
         return -1;
     }
 
-    if (ioctl(fileno(stdout), TIOCGWINSZ, &screen_size) == -1) {
-        screen_size.ws_row = swin_lines();
-        screen_size.ws_col = swin_cols();
-    }
+    screen_size.ws_row = swin_lines();
+    screen_size.ws_col = swin_cols();
+    sync_terminal_size();
 
     /* Create the file dialog object */
     fd = filedlg_new(0, 0, HEIGHT, WIDTH);
@@ -1668,7 +1681,9 @@ void if_display_help(void)
     std::string cgdb_help_file;
     int ret_val = 0;
 
-    cgdb_help_file = fs_util_get_path(PKGDATADIR, "cgdb.txt");
+    const char *data_dir = getenv("CGDB_DATA_DIR");
+    cgdb_help_file = fs_util_get_path(
+        data_dir && *data_dir ? data_dir : PKGDATADIR, "cgdb.txt");
 
     /* File doesn't exist. Try to find cgdb.txt in the build dir in case
      * the user is running a built cgdb binary directly. */
@@ -1706,9 +1721,9 @@ void if_clear_filedlg(void)
     filedlg_clear(fd);
 }
 
-void if_add_filedlg_choice(const std::string &filename)
+int if_add_filedlg_choice(const std::string &filename)
 {
-    filedlg_add_file_choice(fd, filename.c_str());
+    return filedlg_add_file_choice(fd, filename.c_str());
 }
 
 void if_filedlg_display_message(char *message)

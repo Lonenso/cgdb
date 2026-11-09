@@ -1,0 +1,57 @@
+set timeout 12
+proc need {pattern} {
+    expect {
+        -re $pattern {}
+        timeout {puts stderr "FAIL: waiting for $pattern"; exit 1}
+        eof {puts stderr "FAIL: EOF waiting for $pattern"; exit 1}
+    }
+}
+proc need_text {text} {
+    set pattern ""
+    foreach ch [split $text ""] {append pattern $ch {(?:\x1b\[[0-?]*[ -/]*[@-~]|\r|\n)*}}
+    need $pattern
+}
+if {[info exists env(CGDB_TEST_LAUNCHER)] && $env(CGDB_TEST_LAUNCHER) eq "1"} {
+    spawn [lindex $argv 0] -nx -q [lindex $argv 2]
+} else {
+    spawn [lindex $argv 0] --native-gdb -d [lindex $argv 1] -nx -q --data-directory=$env(GDB_DATA_DIRECTORY) [lindex $argv 2]
+}
+need {\(gdb\)}
+after 300
+send "set confirm off\r"
+need {\(gdb\)}
+send "set pagination off\r"
+need {\(gdb\)}
+send "\033"
+after 100
+send "o"
+need {Select a file}
+send "q"
+after 100
+send "10G "
+after 300
+send "i"
+send "python print(123456 + len(gdb.breakpoints() or \[\]))\r"
+need_text 123457
+# Verify sizes through the native Windows console API, after actual terminal
+# resize events. Values here are test inputs, never application defaults.
+if {[info exists env(CGDB_EXPECT_RESIZE)]} {
+foreach cols {101 137} rows {31 49} {
+    stty rows $rows columns $cols < $spawn_out(slave,name)
+    after 500
+    send "python import ctypes as c; k=c.WinDLL('kernel32'); k.GetStdHandle.restype=c.c_void_p; b=(c.c_short*11)(); k.GetConsoleScreenBufferInfo(c.c_void_p(k.GetStdHandle(-11)),c.byref(b)); print(700000+b\[0\])\r"
+    need_text [expr {700000+$cols}]
+}
+}
+send "run spin\r"
+need_text INTERRUPT_READY
+send "\033"
+after 100
+send ":quit\r"
+expect {
+    eof {}
+    timeout {puts stderr "FAIL: :quit did not exit"; exit 1}
+}
+set result [wait]
+if {[lindex $result 3] != 0} {puts stderr "FAIL: CGDB exit $result"; exit 1}
+puts "PASS: file dialog, space breakpoint path, :quit while running"

@@ -30,6 +30,11 @@
 #include <errno.h>
 #endif /* HAVE_ERRNO_H */
 
+#if defined(__CYGWIN__)
+#include <sys/cygwin.h>
+#include <vector>
+#endif
+
 #include "sys_util.h"
 #include "fs_util.h"
 
@@ -128,4 +133,39 @@ int fs_verify_file_exists(const std::string &path)
         return 0;
 
     return 1;
+}
+
+std::string fs_util_debugger_path(const std::string &input)
+{
+#if defined(__CYGWIN__)
+    std::string path = input;
+    size_t drive = std::string::npos;
+    for (size_t i = 0; i + 2 < path.size(); ++i) {
+        const char c = path[i];
+        if (((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) &&
+                path[i + 1] == ':' &&
+                (path[i + 2] == '/' || path[i + 2] == '\\') &&
+                (i == 0 || path[i - 1] == '/' || path[i - 1] == '\\'))
+            drive = i;
+    }
+
+    // A drive-qualified absolute name supersedes an erroneously prepended
+    // compilation directory. Do not stat source files in this hot path.
+    if (drive != std::string::npos)
+        path.erase(0, drive);
+    else if (path.compare(0, 2, "\\\\") != 0)
+        return path;
+
+    const ssize_t size = cygwin_conv_path(CCP_WIN_A_TO_POSIX,
+            path.c_str(), NULL, 0);
+    if (size > 0) {
+        std::vector<char> buffer(static_cast<size_t>(size));
+        if (cygwin_conv_path(CCP_WIN_A_TO_POSIX, path.c_str(),
+                    buffer.data(), buffer.size()) == 0)
+            return std::string(buffer.data());
+    }
+    return path;
+#else
+    return input;
+#endif
 }

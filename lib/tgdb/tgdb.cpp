@@ -31,12 +31,17 @@
 
 #include "tgdb.h"
 #include "fork_util.h"
+#include "fs_util.h"
 #include "io.h"
 #include "terminal.h"
 #include "pseudo.h" /* SLAVE_SIZE constant */
 #include "sys_util.h"
 #include "cgdb_clog.h"
 #include "gdbwire.h"
+#include "native_console_protocol.h"
+#ifdef HAVE_MSYS_CONSOLE_HOST
+#include <sys/cygwin.h>
+#endif
 
 /* }}} */
 
@@ -68,6 +73,7 @@ struct tgdb {
 
     /** The pid of child process */
     pid_t debugger_pid;
+    bool native_gdb;
 
     /** The list of command requests to process */
     tgdb_request_ptr_list *command_requests;
@@ -198,8 +204,8 @@ static void tgdb_commands_process_breakpoint(
         struct tgdb_breakpoint tb;
 
         if (file_location_avialable) {
-            tb.path = (breakpoint->fullname)?
-                breakpoint->fullname: breakpoint->file;
+            tb.path = fs_util_debugger_path((breakpoint->fullname)?
+                breakpoint->fullname: breakpoint->file);
             tb.line = breakpoint->line;
         } else {
             tb.line = 0;
@@ -274,7 +280,8 @@ tgdb_commands_process_info_sources(struct tgdb *tgdb,
             mi_command->variant.file_list_exec_source_files.files;
         while (files) {
             char *file = (files->fullname)?files->fullname:files->file;
-            source_files.push_back(file);
+            if (file)
+                source_files.push_back(fs_util_debugger_path(file));
             files = files->next;
         }
 
@@ -299,9 +306,11 @@ tgdb_commands_send_source_file(struct tgdb *tgdb, const char *fullname,
         const char *func, int line)
 {
     struct tgdb_file_position tfp;
+    std::string normalized_path;
 
     if (fullname || file) {
-        tfp.path = (fullname)?fullname:file;
+        normalized_path = fs_util_debugger_path((fullname)?fullname:file);
+        tfp.path = normalized_path.c_str();
     } else {
         tfp.path = 0;
     }
@@ -554,6 +563,10 @@ static void gdbwire_prompt_callback(void *context, const char *prompt)
 static void gdbwire_parse_error_callback(void *context, const char *mi,
             const char *token, struct gdbwire_mi_position position)
 {
+    // GDB can emit a bare line ending on the secondary UI after SIGINT.
+    // It carries no MI record; retain diagnostics for every nonempty record.
+    if (mi && strspn(mi, "\r\n") == strlen(mi))
+        return;
     clog_error(CLOG_CGDB,
         "gdbwire parse error\n"
         "  mi text=[%s]\n"
@@ -752,10 +765,17 @@ struct tgdb *tgdb_initialize(tgdb_callbacks callbacks)
 }
 
 int tgdb_start_gdb(struct tgdb *tgdb,
-        const char *debugger, int argc, char **argv,
+        const char *debugger, bool native_gdb, int argc, char **argv,
         int gdb_win_rows, int gdb_win_cols, int *gdb_console_fd,
         int *gdb_mi_fd)
 {
+    tgdb->native_gdb = native_gdb;
+    if (native_gdb) {
+        pty_pair_destroy(tgdb->new_ui_pty_pair);
+        tgdb->new_ui_pty_pair = pty_pair_create_named_pipe();
+        if (!tgdb->new_ui_pty_pair)
+            return -1;
+    }
     tgdb->debugger_pid = invoke_debugger(debugger, argc, argv,
             gdb_win_rows, gdb_win_cols, &tgdb->debugger_stdin,
             &tgdb->debugger_stdout, tgdb->new_ui_pty_pair);
@@ -764,6 +784,7 @@ int tgdb_start_gdb(struct tgdb *tgdb,
     if (tgdb->debugger_pid == -1)
         return -1;
 
+    tgdb->gdb_mi_ui_fd = pty_pair_get_masterfd(tgdb->new_ui_pty_pair);
     *gdb_console_fd = tgdb->debugger_stdout;
     *gdb_mi_fd = tgdb->gdb_mi_ui_fd;
 
@@ -782,11 +803,23 @@ int tgdb_shutdown(struct tgdb *tgdb)
     delete tgdb->command_requests;
     tgdb->command_requests = 0;
 
+    if (tgdb->native_gdb && tgdb->debugger_pid > 0) {
+        int status;
+        // Only signal a child that is still ours and has not exited.
+        pid_t result;
+        do {
+            result = waitpid(tgdb->debugger_pid, &status, WNOHANG);
+        } while (result == -1 && errno == EINTR);
+        if (result == 0) kill(tgdb->debugger_pid, SIGTERM);
+    }
+    if (tgdb->debugger_stdout != tgdb->debugger_stdin && tgdb->debugger_stdout != -1)
+        cgdb_close(tgdb->debugger_stdout);
     if (tgdb->debugger_stdin != -1) {
         cgdb_close(tgdb->debugger_stdin);
         tgdb->debugger_stdin = -1;
     }
 
+    pty_pair_destroy(tgdb->new_ui_pty_pair);
     gdbwire_destroy(tgdb->wire);
 
     delete tgdb;
@@ -841,9 +874,21 @@ static const char *tgdb_get_client_command(struct tgdb *tgdb,
     return NULL;
 }
 
-static char *tgdb_break_call(const char *action,
+static char *tgdb_break_call(struct tgdb *tgdb, const char *action,
     const char *file, int line, uint64_t addr)
 {
+#ifdef HAVE_MSYS_CONSOLE_HOST
+    if (file && tgdb->native_gdb) {
+        char *native = (char *)cygwin_create_path(CCP_POSIX_TO_WIN_A, file);
+        if (native) {
+            // Windows forward slashes avoid GDB command-string escapes.
+            for (char *p = native; *p; ++p) if (*p == '\\') *p = '/';
+            char *command = sys_aprintf("%s \"%s\":%d", action, native, line);
+            free(native);
+            return command;
+        }
+    }
+#endif
     if (file)
         return sys_aprintf("%s \"%s\":%d", action, file, line);
 
@@ -870,7 +915,7 @@ static char *tgdb_client_modify_breakpoint_call(struct tgdb *tgdb,
         break;
     }
 
-    return tgdb_break_call(action, file, line, addr);
+    return tgdb_break_call(tgdb, action, file, line, addr);
 }
 
 /*******************************************************************************
@@ -953,7 +998,7 @@ static void tgdb_run_request(struct tgdb *tgdb, struct tgdb_request *request)
         // for gdb to respond with an mi prompt. CGDB can send as many
         // commands as it likes, just as if the user typed it at the console
         tgdb->is_gdb_ready_for_next_command = 1;
-        io_writen(tgdb->debugger_stdin, command.c_str(), command.size());
+        tgdb_send_console_reply(tgdb, command.c_str(), command.size());
     } else {
         io_writen(tgdb->gdb_mi_ui_fd, command.c_str(), command.size());
     }
@@ -978,9 +1023,31 @@ static void tgdb_unqueue_and_deliver_command(struct tgdb *tgdb)
     }
 }
 
+int tgdb_send_console_reply(struct tgdb *tgdb, const char *bytes, size_t len)
+{
+    if (tgdb->native_gdb) {
+        while (len) {
+            size_t size = std::min(len, (size_t)CGDB_CONSOLE_MAX_PAYLOAD);
+            char header[] = {CGDB_CONSOLE_INPUT, (char)(size & 255), (char)(size >> 8)};
+            std::string packet(header, sizeof(header));
+            packet.append(bytes, size);
+            if (io_writen(tgdb->debugger_stdin, packet.data(), packet.size()) == -1)
+                return -1;
+            bytes += size;
+            len -= size;
+        }
+        return 0;
+    }
+    if (io_writen(tgdb->debugger_stdin, bytes, len) == -1) {
+        clog_error(CLOG_CGDB, "Unable to write terminal reply to GDB console");
+        return -1;
+    }
+    return 0;
+}
+
 int tgdb_send_char(struct tgdb *tgdb, char c)
 {
-    if (io_write_byte(tgdb->debugger_stdin, c) == -1) {
+    if (tgdb_send_console_reply(tgdb, &c, 1) == -1) {
         clog_error(CLOG_CGDB, "io_write_byte failed");
         return -1;
     }
@@ -1013,24 +1080,30 @@ static int tgdb_add_quit_command(struct tgdb *tgdb, bool new_ui_unsupported)
  * The tgdb instance
  *
  * @return
- * 0 on success or -1 on error
+ * 1 if GDB exited, 0 if it has no exit status, or -1 on error
  */
 static int tgdb_handle_sigchld(struct tgdb *tgdb)
 {
-    int result = 0;
+    if (tgdb->debugger_pid <= 0)
+        return 0;
+
     int status;
-    int waitpid_result;
-
+    pid_t result;
     do {
-        waitpid_result = waitpid(tgdb->debugger_pid, &status, WNOHANG);
-        if (waitpid_result == -1) {
-            result = -1;
-            clog_error(CLOG_CGDB, "waitpid error %d %s",
-                    errno, strerror(errno));
-        }
-    } while (waitpid_result == 0);
+        result = waitpid(tgdb->debugger_pid, &status, WNOHANG);
+    } while (result == -1 && errno == EINTR);
 
-    return result;
+    /* SIGCHLD may belong to a temporary shell, not GDB. Do not spin while
+     * a live debugger has no status to report, or queue a debugger quit. */
+    if (result == -1 && errno != ECHILD) {
+        clog_error(CLOG_CGDB, "waitpid error %d %s", errno, strerror(errno));
+        return -1;
+    }
+    if (result == tgdb->debugger_pid) {
+        tgdb->debugger_pid = -1;
+        return 1;
+    }
+    return 0;
 }
 
 /**
@@ -1171,6 +1244,14 @@ int tgdb_resize_console(struct tgdb *tgdb, int rows, int cols)
 
     if (tgdb->debugger_stdin == -1) {
         return 0;
+    }
+    if (tgdb->native_gdb) {
+        if (rows <= 0 || cols <= 0 || rows > 32767 || cols > 32767)
+            return -1;
+        char packet[] = {CGDB_CONSOLE_RESIZE, 4, 0,
+            (char)(rows & 255), (char)(rows >> 8),
+            (char)(cols & 255), (char)(cols >> 8)};
+        return io_writen(tgdb->debugger_stdin, packet, sizeof(packet)) == -1 ? -1 : 0;
     }
     
     size.ws_row = rows;
@@ -1348,7 +1429,7 @@ int tgdb_get_gdb_command(struct tgdb *tgdb, tgdb_request_ptr request,
             str = NULL;
             break;
         case TGDB_REQUEST_UNTIL_LINE:
-            str = tgdb_break_call("until",
+            str = tgdb_break_call(tgdb, "until",
                 request->choice.until_line.file,
                 request->choice.until_line.line,
                 request->choice.until_line.addr);
@@ -1410,6 +1491,10 @@ int tgdb_get_gdb_command(struct tgdb *tgdb, tgdb_request_ptr request,
 
 int tgdb_signal_notification(struct tgdb *tgdb, int signum)
 {
+    if (tgdb->native_gdb && (signum == SIGINT || signum == SIGQUIT)) {
+        if (signum == SIGINT) tgdb->control_c = 1;
+        return tgdb_send_char(tgdb, signum == SIGINT ? '\003' : '\034');
+    }
     struct termios t;
     cc_t *sig_char = NULL;
 
@@ -1425,9 +1510,8 @@ int tgdb_signal_notification(struct tgdb *tgdb, int signum)
         if (write(tgdb->debugger_stdin, sig_char, 1) < 1)
             return -1;
     } else if (signum == SIGCHLD) {
-        // GDB has died, clean up the zombie and send the quit command
-        tgdb_handle_sigchld(tgdb);
-        tgdb_add_quit_command(tgdb, false);
+        if (tgdb_handle_sigchld(tgdb) > 0)
+            tgdb_add_quit_command(tgdb, false);
     }
 
     return 0;

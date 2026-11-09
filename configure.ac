@@ -28,6 +28,19 @@ case $host in
    ;;
 esac
 
+dnl MSYS needs a native console bootstrap, built with a MinGW compiler.
+AC_ARG_VAR([NATIVE_CC], [Native Windows C compiler for the MSYS console helper])
+case $host_os in
+  msys*)
+    AS_IF([test -z "$NATIVE_CC"], [AC_PATH_PROGS([NATIVE_CC], [x86_64-w64-mingw32-gcc], [], [$PATH:/ucrt64/bin:/mingw64/bin])])
+    AS_IF([test -z "$NATIVE_CC" && test -x /ucrt64/bin/gcc], [NATIVE_CC=/ucrt64/bin/gcc])
+    AS_IF([test -z "$NATIVE_CC" && test -x /mingw64/bin/gcc], [NATIVE_CC=/mingw64/bin/gcc])
+    AS_IF([test -z "$NATIVE_CC"], [AC_MSG_ERROR([MSYS builds require NATIVE_CC pointing to a native MinGW gcc])])
+    AC_DEFINE([HAVE_MSYS_CONSOLE_HOST], [1], [Build the MSYS native console bootstrap])
+    ;;
+esac
+AM_CONDITIONAL([MSYS_CONSOLE_HOST], [test "x$host_os" = xmsys])
+
 dnl Checks for header files.
 AC_HEADER_SYS_WAIT
 

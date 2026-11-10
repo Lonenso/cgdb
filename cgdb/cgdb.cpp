@@ -587,7 +587,7 @@ static void update_file_position(const tgdb_file_position &tfp)
 
 /* This is a list of all the source files */
 // The source list and sorted dialog are cached for this session.
-// Missing files are filtered when the cache is populated, and rechecked on selection.
+// File existence is checked only when selecting a source file.
 // Newly visited disassembly buffers are added whenever the dialog is opened.
 static bool source_dialog_cached = false;
 
@@ -628,7 +628,7 @@ static void update_source_files(const std::list<std::string> &source_files)
 
     if (added_files == 0) {
         if_display_message(WIN_REFRESH, "Error:",
-            " No local source files available. Check debug info and GDB source mappings.");
+            " No source files reported by GDB. Check that the program has debug info.");
     } else {
         if_set_focus(FILE_DLG);
         source_dialog_cached = true;

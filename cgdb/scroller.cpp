@@ -139,26 +139,22 @@ static void scr_ring_bell(void *data)
 //
 // @return
 // The new virtual terminal instance
-static VTerminal *scr_new_vterminal(struct scroller *scr,
-        void (*write_reply)(const char *, size_t, void *), void *reply_data)
+static VTerminal *scr_new_vterminal(struct scroller *scr)
 {
     int scrollback_buffer_size = cgdbrc_get_int(CGDBRC_SCROLLBACK_BUFFER_SIZE);
 
-    VTerminalOptions options = {};
+    VTerminalOptions options;
     options.data = (void*)scr;
     // See note in function comments about std::max usage here
     options.width = std::max(swin_getmaxx(scr->win), 1);
     options.height = std::max(swin_getmaxy(scr->win), 1);
     options.scrollback_buffer_size = scrollback_buffer_size;
     options.ring_bell = scr_ring_bell;
-    options.write_reply = write_reply;
-    options.reply_data = reply_data;
 
     return vterminal_new(options);
 }
 
-struct scroller *scr_new(SWINDOW *win,
-        void (*write_reply)(const char *, size_t, void *), void *reply_data)
+struct scroller *scr_new(SWINDOW *win)
 {
     struct scroller *rv = new scroller();
 
@@ -170,7 +166,7 @@ struct scroller *scr_new(SWINDOW *win,
     rv->hlregex = NULL;
     rv->search_row = rv->search_col_start = rv->search_col_end = 0;
 
-    rv->vt = scr_new_vterminal(rv, write_reply, reply_data);
+    rv->vt = scr_new_vterminal(rv);
 
     return rv;
 }

@@ -585,11 +585,6 @@ static void validate_window_sizes(void)
         window_shift = min_window_size_shift;
 }
 
-static void terminal_reply(const char *bytes, size_t len, void *context)
-{
-    tgdb_send_console_reply(static_cast<struct tgdb *>(context), bytes, len);
-}
-
 int if_layout()
 {
     SWINDOW *gdb_scroller_win = NULL;
@@ -615,7 +610,7 @@ int if_layout()
     if (gdb_scroller) {
         scr_move(gdb_scroller, gdb_scroller_win);
     } else {
-        gdb_scroller = scr_new(gdb_scroller_win, terminal_reply, tgdb);
+        gdb_scroller = scr_new(gdb_scroller_win);
     }
 
     /* Initialize the status bar window */

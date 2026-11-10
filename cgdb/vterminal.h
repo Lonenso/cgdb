@@ -23,10 +23,6 @@ struct VTerminalOptions
 
     // A function to ring the bell
     void (*ring_bell)(void *data);
-
-    // Return terminal protocol replies to the process owning this terminal.
-    void (*write_reply)(const char *bytes, size_t len, void *data);
-    void *reply_data;
 };
 
 // Create a new virtual terminal

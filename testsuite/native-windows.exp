@@ -23,7 +23,6 @@ proc need_text {text} {
     }
     need $pattern
 }
-set options {}
 set gdboptions {}
 if {[info exists env(GDB_DATA_DIRECTORY)]} {
     lappend gdboptions --data-directory=$env(GDB_DATA_DIRECTORY)
@@ -31,7 +30,7 @@ if {[info exists env(GDB_DATA_DIRECTORY)]} {
 if {[info exists env(CGDB_TEST_LAUNCHER)] && $env(CGDB_TEST_LAUNCHER) eq "1"} {
     spawn [lindex $argv 0] -nx -q [lindex $argv 2]
 } else {
-    spawn [lindex $argv 0] {*}$options -d [lindex $argv 1] -nx -q {*}$gdboptions [lindex $argv 2]
+    spawn [lindex $argv 0] -d [lindex $argv 1] -nx -q {*}$gdboptions [lindex $argv 2]
 }
 need {\(gdb\)}
 send "set pagination off\r"

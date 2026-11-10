@@ -45,10 +45,19 @@
 
 /* }}} */
 
+// Each build has one transport: native Windows on MSYS, PTYs elsewhere.
+#ifdef HAVE_MSYS_CONSOLE_HOST
+static const bool native_gdb = true;
+#else
+static const bool native_gdb = false;
+#endif
+
 /* struct tgdb {{{ */
 
 typedef struct tgdb_request *tgdb_request_ptr;
 typedef std::list<tgdb_request_ptr> tgdb_request_ptr_list;
+
+static int tgdb_write_console(struct tgdb *tgdb, const char *bytes, size_t len);
 
 /**
  * The TGDB context data structure.
@@ -73,7 +82,6 @@ struct tgdb {
 
     /** The pid of child process */
     pid_t debugger_pid;
-    bool native_gdb;
 
     /** The list of command requests to process */
     tgdb_request_ptr_list *command_requests;
@@ -620,6 +628,7 @@ static struct tgdb *initialize_tgdb_context(tgdb_callbacks callbacks)
 
     obj->control_c = 0;
 
+    obj->debugger_pid = -1;
     obj->debugger_stdout = -1;
     obj->debugger_stdin = -1;
 
@@ -733,16 +742,17 @@ struct tgdb *tgdb_initialize(tgdb_callbacks callbacks)
     /* Initialize the libtgdb context */
     struct tgdb *tgdb = initialize_tgdb_context(callbacks);
 
-    // create the new ui pty pair
-    // initialize the size to the gdb window size
-    tgdb->new_ui_pty_pair = pty_pair_create();
+    tgdb->new_ui_pty_pair = native_gdb
+        ? pty_pair_create_named_pipe() : pty_pair_create();
     if (!tgdb->new_ui_pty_pair) {
-        clog_error(CLOG_CGDB, "pty_pair_create failed");
+        clog_error(CLOG_CGDB, "creating debugger MI channel failed");
+        tgdb_shutdown(tgdb);
         return NULL;
     }
 
     tgdb->gdb_mi_ui_fd = pty_pair_get_masterfd(tgdb->new_ui_pty_pair);
-    tty_set_echo(tgdb->gdb_mi_ui_fd, 0);
+    if (!native_gdb)
+        tty_set_echo(tgdb->gdb_mi_ui_fd, 0);
 
     /* Need to get source information before breakpoint information otherwise
      * the TGDB_UPDATE_BREAKPOINTS event will be ignored in process_commands()
@@ -765,17 +775,10 @@ struct tgdb *tgdb_initialize(tgdb_callbacks callbacks)
 }
 
 int tgdb_start_gdb(struct tgdb *tgdb,
-        const char *debugger, bool native_gdb, int argc, char **argv,
+        const char *debugger, int argc, char **argv,
         int gdb_win_rows, int gdb_win_cols, int *gdb_console_fd,
         int *gdb_mi_fd)
 {
-    tgdb->native_gdb = native_gdb;
-    if (native_gdb) {
-        pty_pair_destroy(tgdb->new_ui_pty_pair);
-        tgdb->new_ui_pty_pair = pty_pair_create_named_pipe();
-        if (!tgdb->new_ui_pty_pair)
-            return -1;
-    }
     tgdb->debugger_pid = invoke_debugger(debugger, argc, argv,
             gdb_win_rows, gdb_win_cols, &tgdb->debugger_stdin,
             &tgdb->debugger_stdout, tgdb->new_ui_pty_pair);
@@ -803,7 +806,7 @@ int tgdb_shutdown(struct tgdb *tgdb)
     delete tgdb->command_requests;
     tgdb->command_requests = 0;
 
-    if (tgdb->native_gdb && tgdb->debugger_pid > 0) {
+    if (native_gdb && tgdb->debugger_pid > 0) {
         int status;
         // Only signal a child that is still ours and has not exited.
         pid_t result;
@@ -874,11 +877,11 @@ static const char *tgdb_get_client_command(struct tgdb *tgdb,
     return NULL;
 }
 
-static char *tgdb_break_call(struct tgdb *tgdb, const char *action,
+static char *tgdb_break_call(const char *action,
     const char *file, int line, uint64_t addr)
 {
 #ifdef HAVE_MSYS_CONSOLE_HOST
-    if (file && tgdb->native_gdb) {
+    if (file && native_gdb) {
         char *native = (char *)cygwin_create_path(CCP_POSIX_TO_WIN_A, file);
         if (native) {
             // Windows forward slashes avoid GDB command-string escapes.
@@ -915,7 +918,7 @@ static char *tgdb_client_modify_breakpoint_call(struct tgdb *tgdb,
         break;
     }
 
-    return tgdb_break_call(tgdb, action, file, line, addr);
+    return tgdb_break_call(action, file, line, addr);
 }
 
 /*******************************************************************************
@@ -998,7 +1001,7 @@ static void tgdb_run_request(struct tgdb *tgdb, struct tgdb_request *request)
         // for gdb to respond with an mi prompt. CGDB can send as many
         // commands as it likes, just as if the user typed it at the console
         tgdb->is_gdb_ready_for_next_command = 1;
-        tgdb_send_console_reply(tgdb, command.c_str(), command.size());
+        tgdb_write_console(tgdb, command.c_str(), command.size());
     } else {
         io_writen(tgdb->gdb_mi_ui_fd, command.c_str(), command.size());
     }
@@ -1023,9 +1026,9 @@ static void tgdb_unqueue_and_deliver_command(struct tgdb *tgdb)
     }
 }
 
-int tgdb_send_console_reply(struct tgdb *tgdb, const char *bytes, size_t len)
+static int tgdb_write_console(struct tgdb *tgdb, const char *bytes, size_t len)
 {
-    if (tgdb->native_gdb) {
+    if (native_gdb) {
         while (len) {
             size_t size = std::min(len, (size_t)CGDB_CONSOLE_MAX_PAYLOAD);
             char header[] = {CGDB_CONSOLE_INPUT, (char)(size & 255), (char)(size >> 8)};
@@ -1039,7 +1042,7 @@ int tgdb_send_console_reply(struct tgdb *tgdb, const char *bytes, size_t len)
         return 0;
     }
     if (io_writen(tgdb->debugger_stdin, bytes, len) == -1) {
-        clog_error(CLOG_CGDB, "Unable to write terminal reply to GDB console");
+        clog_error(CLOG_CGDB, "Unable to write to GDB console");
         return -1;
     }
     return 0;
@@ -1047,7 +1050,7 @@ int tgdb_send_console_reply(struct tgdb *tgdb, const char *bytes, size_t len)
 
 int tgdb_send_char(struct tgdb *tgdb, char c)
 {
-    if (tgdb_send_console_reply(tgdb, &c, 1) == -1) {
+    if (tgdb_write_console(tgdb, &c, 1) == -1) {
         clog_error(CLOG_CGDB, "io_write_byte failed");
         return -1;
     }
@@ -1245,7 +1248,7 @@ int tgdb_resize_console(struct tgdb *tgdb, int rows, int cols)
     if (tgdb->debugger_stdin == -1) {
         return 0;
     }
-    if (tgdb->native_gdb) {
+    if (native_gdb) {
         if (rows <= 0 || cols <= 0 || rows > 32767 || cols > 32767)
             return -1;
         char packet[] = {CGDB_CONSOLE_RESIZE, 4, 0,
@@ -1429,7 +1432,7 @@ int tgdb_get_gdb_command(struct tgdb *tgdb, tgdb_request_ptr request,
             str = NULL;
             break;
         case TGDB_REQUEST_UNTIL_LINE:
-            str = tgdb_break_call(tgdb, "until",
+            str = tgdb_break_call("until",
                 request->choice.until_line.file,
                 request->choice.until_line.line,
                 request->choice.until_line.addr);
@@ -1491,7 +1494,7 @@ int tgdb_get_gdb_command(struct tgdb *tgdb, tgdb_request_ptr request,
 
 int tgdb_signal_notification(struct tgdb *tgdb, int signum)
 {
-    if (tgdb->native_gdb && (signum == SIGINT || signum == SIGQUIT)) {
+    if (native_gdb && (signum == SIGINT || signum == SIGQUIT)) {
         if (signum == SIGINT) tgdb->control_c = 1;
         return tgdb_send_char(tgdb, signum == SIGINT ? '\003' : '\034');
     }

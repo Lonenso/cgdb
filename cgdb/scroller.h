@@ -4,7 +4,6 @@
 #define _SCROLLER_H_
 
 #include "sys_win.h"
-#include <stddef.h>
 
 struct scroller;
 
@@ -12,8 +11,7 @@ struct scroller;
 //
 // @return
 // A pointer to a new scroller.
-struct scroller *scr_new(SWINDOW *window,
-        void (*write_reply)(const char *, size_t, void *), void *reply_data);
+struct scroller *scr_new(SWINDOW *window);
 
 // Releases the memory allocated by a scroller
 //

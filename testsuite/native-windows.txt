@@ -1,0 +1,79 @@
+Native Windows GDB integration
+==============================
+
+CGDB is an MSYS program; its debugger and console helper are native Windows
+programs. Linux and other non-MSYS builds retain the ordinary PTY backend.
+The native backend requires a ConPTY-capable Windows installation (Windows 10
+1809 or later), an MSYS compiler, and a native MinGW compiler for the helper.
+
+Build from the MSYS shell:
+  CGDB_VERSION=0.8.0 ./autogen.sh
+  mkdir build && cd build
+  ../configure --build=x86_64-pc-msys --host=x86_64-pc-msys NATIVE_CC=/ucrt64/bin/gcc
+  make -j4
+
+Keep cgdb.exe and cgdb-console-host.exe together. Select a patched UCRT64 GDB
+using -d or PATH. --native-gdb remains accepted as a compatibility alias.
+The old MSYS /usr/bin/gdb console bootstrap is not provided.
+
+GDB prerequisite
+---------------
+Tests use GDB 17.2 with Windows new-ui fixes: separate input/output FILE streams
+over one named-pipe connection; serial_fdopen registration for secondary input;
+the _kbhit fast path restricted to console descriptors; stream/watcher cleanup.
+An unpatched UCRT64 GDB is not sufficient. This dependency must be resolved or
+distributed separately before users can use this backend. COFF import-fixup
+and RTTI-warning patches are unrelated and are not prerequisites for CGDB.
+
+Manual integration tests
+------------------------
+Run from the directory containing the source fixture, so relative debug paths
+resolve. Also repeat with an absolute source path containing spaces. The native
+compiler runtime DLLs must be available to the inferior in its normal environment.
+Configure PYTHONHOME/GDB_DATA_DIRECTORY only as required by the GDB installation.
+
+  /ucrt64/bin/g++ -g -O0 msys-stdout.cpp -o msys-stdout.exe
+  expect native-windows.exp /path/to/cgdb.exe /path/to/gdb.exe ./msys-stdout.exe input
+  expect native-windows-ui.exp /path/to/cgdb.exe /path/to/gdb.exe ./msys-stdout.exe
+  expect native-windows-startup.exp /path/to/cgdb.exe
+
+The first test checks unflushed fprintf(stdout) and cout newline output before
+exit, real next, two runs, fgets input, Ctrl-C and quit. The UI test checks the
+source dialog, space breakpoint and :quit during execution. Startup tests bound
+missing-debugger and early-child-exit cases. They do not benchmark SSH latency.
+
+POSIX regression (Python 3 standard library and a C compiler):
+  python3 pty-regression.py /path/to/cgdb /path/to/gdb
+GDB_DATA_DIRECTORY optionally supplies GDB's data directory; CGDB_TEST_LOG
+optionally preserves the terminal transcript. Tests cover breakpoint/next,
+stdout, source dialog, shell return, resize, Ctrl-C, quit and termios restoration.
+
+Controlled ablations, 2026-11-10
+-------------------------------
+Baseline: fork f3a0ba18ba59ce3905b5b2cbc6b8b1acfd0597a8, MSYS runtime 3.6.4,
+native patched GDB 17.2, TERM=screen-256color. Each variant removes one mechanism
+only; restore its source and rebuild before the next variant. Both relative and
+absolute-with-spaces fixture sets gave the same results:
+
+  Variant                           Output/input   Source breakpoint   Startup errors
+  Baseline                          PASS           PASS                PASS
+  No inner console binding          FAIL startup   FAIL startup        PASS
+  No terminal reply forwarding       PASS           PASS                PASS
+  No outgoing breakpoint path map    PASS           FAIL                PASS
+
+Reproduction changes against that baseline:
+1. console-host.c: replace the bound command's "--bind-console" self-launch
+   with the debugger command alone. This removes the explicit CONIN$/CONOUT$
+   binding. MI startup fails after its bounded connection timeout.
+2. vterminal.cpp: omit vterm_output_set_callback. All three tests still pass;
+   the final implementation removes this legacy MSYS ConPTY activation plumbing.
+3. tgdb.cpp: disable the cygwin_create_path branch of tgdb_break_call. The space
+   breakpoint test fails while console-issued debugger commands still work.
+
+These are functional ablations, not performance measurements or proof for every
+possible inferior. Keep the console binding and path conversion. Terminal reply
+forwarding is outside this native backend change; virtual-terminal behavior now
+matches upstream. Named-pipe bridge cancellation, job cleanup and dynamic resize
+were retained, not ablated. Existing automated Windows long-input/resize stress
+behavior remains unresolved; this change does not claim to fix it. No company
+SSH deployment, older Windows, macOS/BSD or separate Linux GDB patch test was run.

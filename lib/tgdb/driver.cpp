@@ -304,10 +304,8 @@ int main(int argc, char **argv)
     }
 
     {
-        bool native_gdb = false;
         int rows = 0, cols = 0;
 #ifdef HAVE_MSYS_CONSOLE_HOST
-        native_gdb = true;
         struct winsize size = {};
         if (ioctl(STDIN_FILENO, TIOCGWINSZ, &size) == -1 ||
                 !size.ws_row || !size.ws_col)
@@ -315,7 +313,7 @@ int main(int argc, char **argv)
         rows = size.ws_row;
         cols = size.ws_col;
 #endif
-        if (tgdb_start_gdb(tgdb, NULL, native_gdb, argc - 1, argv + 1, rows, cols,
+        if (tgdb_start_gdb(tgdb, NULL, argc - 1, argv + 1, rows, cols,
                 &gdb_console_fd, &gdb_mi_fd ) == -1) {
             clog_error(CLOG_CGDB, "tgdb_start error");
             goto driver_end;

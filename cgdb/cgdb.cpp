@@ -105,11 +105,6 @@ static int gdb_console_fd = -1; /* GDB console descriptor */
 static int gdb_mi_fd = -1;      /* GDB Machine Interface descriptor */
 static bool new_ui_unsupported = false;
 
-#ifdef HAVE_MSYS_CONSOLE_HOST
-static bool native_gdb = true;
-#else
-static bool native_gdb = false;
-#endif
 static char *debugger_path = NULL;  /* Path to debugger to use */
 
 /* Set to 1 if the user requested cgdb to wait for the debugger to attach. */
@@ -297,7 +292,7 @@ static void parse_long_options(int *argc, char ***argv)
                 }
                 break;
             case 1000:
-                native_gdb = true;
+                // Compatibility alias: the MSYS backend is selected at build time.
                 n++;
                 break;
             case 'v':
@@ -421,7 +416,7 @@ static int start_gdb(int argc, char *argv[])
     // Note, the 40 height by 80 width size here will be overriden
     // once cgdb determines the actual size. This is done in main() in
     // the call to if_layout just after if_init.
-    return tgdb_start_gdb(tgdb, debugger_path, native_gdb, argc, argv, get_gdb_height(),
+    return tgdb_start_gdb(tgdb, debugger_path, argc, argv, get_gdb_height(),
             get_gdb_width(), &gdb_console_fd, &gdb_mi_fd);
 }
 

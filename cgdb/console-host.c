@@ -1,4 +1,4 @@
-/* Native bootstrap for the MSYS GDB console. No MSYS DLL dependency. */
+/* ConPTY host for native UCRT64 GDB. No MSYS DLL dependency. */
 #ifndef UNICODE
 #define UNICODE
 #endif
@@ -197,8 +197,8 @@ int wmain(void)
             return fail("SetConsoleCtrlHandler");
         return run_native(p, dimensions);
     }
-    if (!*p) {
-        fputs("cgdb-console-host: missing child command\n", stderr);
+    if (!bind_console || !*p) {
+        fputs("cgdb-console-host: expected --native-gdb or --bind-console\n", stderr);
         return 127;
     }
 

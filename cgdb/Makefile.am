@@ -55,8 +55,7 @@ cgdb_SOURCES = \
     usage.cpp \
     usage.h
 
-# This executable must not link to msys-2.0.dll: crossing the native process
-# boundary is what activates the console before GDB creates its second UI.
+# This native executable owns UCRT64 GDB's ConPTY and must not link to msys-2.0.dll.
 EXTRA_DIST = console-host.c
 if MSYS_CONSOLE_HOST
 nodist_bin_SCRIPTS = cgdb-console-host.exe

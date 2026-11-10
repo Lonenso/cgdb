@@ -1,7 +1,7 @@
 # Manual MSYS2 integration regression:
 #   /ucrt64/bin/g++ -g -O0 msys-stdout.cpp -o msys-stdout.exe
 #   expect native-windows.exp /path/to/cgdb /path/to/gdb /path/to/msys-stdout.exe
-# With CGDB_TEST_NATIVE=1, GDB is native UCRT64; otherwise MSYS. The inferior is native UCRT64.
+# GDB and the inferior are native UCRT64. Native mode is the MSYS default.
 # CGDB_TEST_LAUNCHER=1 uses a bundle launcher that already selects its debugger.
 # No fflush, endl, unitbuf or setvbuf is used.
 set timeout 30
@@ -24,9 +24,6 @@ proc need_text {text} {
     need $pattern
 }
 set options {}
-if {[info exists env(CGDB_TEST_NATIVE)] && $env(CGDB_TEST_NATIVE) eq "1"} {
-    lappend options --native-gdb
-}
 set gdboptions {}
 if {[info exists env(GDB_DATA_DIRECTORY)]} {
     lappend gdboptions --data-directory=$env(GDB_DATA_DIRECTORY)

@@ -369,9 +369,8 @@ static int pty_free_memory(char *s, int fd, int argc, char *argv[])
 }
 
 #ifdef HAVE_MSYS_CONSOLE_HOST
-// Establish a native console before GDB opens its additional MI PTY. Otherwise
-// MSYS can route inferior input to the wrong PTY (including on runtime 3.6.4).
-static void exec_console_debugger(char **argv, bool native_gdb, int rows, int cols)
+// Own the native GDB console independently of the MSYS terminal.
+static void exec_console_debugger(char **argv, int rows, int cols)
 {
     char self[PATH_MAX];
     ssize_t len = readlink("/proc/self/exe", self, sizeof(self) - 1);
@@ -383,50 +382,33 @@ static void exec_console_debugger(char **argv, bool native_gdb, int rows, int co
         _exit(127);
     *slash = 0;
     std::string helper = std::string(self) + "/cgdb-console-host.exe";
-    if (native_gdb) {
-        // The helper owns the native console; its parent channels are pipes.
-        std::string row_arg = std::to_string(rows), col_arg = std::to_string(cols);
-        std::vector<char *> args;
-        args.push_back((char *)helper.c_str());
-        args.push_back((char *)"--native-gdb");
-        args.push_back((char *)row_arg.c_str());
-        args.push_back((char *)col_arg.c_str());
-        for (char **a = argv; *a; ++a) args.push_back(*a);
-        args.push_back(NULL);
-        execv(helper.c_str(), args.data());
-        perror("cgdb: cannot start native debugger console host");
-        _exit(127);
-    }
-    char *bash = (char *)cygwin_create_path(CCP_POSIX_TO_WIN_A, "/usr/bin/bash.exe");
-    if (!bash)
-        _exit(127);
-    const char *conversion = getenv("MSYS2_ARG_CONV_EXCL");
+    // The helper owns the native console; its parent channels are pipes.
+    std::string row_arg = std::to_string(rows), col_arg = std::to_string(cols);
     std::vector<char *> args;
     args.push_back((char *)helper.c_str());
-    args.push_back(bash);
-    args.push_back((char *)"--noprofile");
-    args.push_back((char *)"--norc");
-    args.push_back((char *)"-c");
-    args.push_back((char *)"if [ \"$1\" = set ]; then export MSYS2_ARG_CONV_EXCL=\"$2\"; else unset MSYS2_ARG_CONV_EXCL; fi; shift 2; exec \"$@\"");
-    args.push_back((char *)"cgdb-console");
-    args.push_back((char *)(conversion ? "set" : "unset"));
-    std::string saved = conversion ? conversion : "";
-    args.push_back((char *)saved.c_str());
-    for (char **a = argv; *a; ++a)
-        args.push_back(*a);
+    args.push_back((char *)"--native-gdb");
+    args.push_back((char *)row_arg.c_str());
+    args.push_back((char *)col_arg.c_str());
+    for (char **a = argv; *a; ++a) args.push_back(*a);
     args.push_back(NULL);
-    // Keep POSIX paths and GDB -ex commands intact through the native helper.
-    setenv("MSYS2_ARG_CONV_EXCL", "*", 1);
     execv(helper.c_str(), args.data());
-    perror("cgdb: cannot start cgdb-console-host.exe");
+    perror("cgdb: cannot start native debugger console host");
     _exit(127);
 }
+
 #endif
 
 int invoke_debugger(const char *path,
         int argc, char *argv[], int gdb_win_rows, int gdb_win_cols,
         int *in, int *out, pty_pair_ptr new_ui_pair)
 {
+#ifdef HAVE_MSYS_CONSOLE_HOST
+    if (!new_ui_pair || !new_ui_pair->named_pipe) {
+        clog_error(CLOG_CGDB, "MSYS builds require the native UCRT64 GDB backend");
+        errno = ENOTSUP;
+        return -1;
+    }
+#endif
     pid_t pid;
     const char *const GDB = "gdb";
     const char *const NW = "--nw";
@@ -542,7 +524,7 @@ int invoke_debugger(const char *path,
             exclusions += "new-ui mi ";
             setenv("MSYS2_ARG_CONV_EXCL", exclusions.c_str(), 1);
         }
-        exec_console_debugger(local_argv, new_ui_pair->named_pipe, gdb_win_rows, gdb_win_cols);
+        exec_console_debugger(local_argv, gdb_win_rows, gdb_win_cols);
 #else
         execvp(local_argv[0], local_argv);
 #endif

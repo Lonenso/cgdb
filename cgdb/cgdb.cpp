@@ -105,7 +105,11 @@ static int gdb_console_fd = -1; /* GDB console descriptor */
 static int gdb_mi_fd = -1;      /* GDB Machine Interface descriptor */
 static bool new_ui_unsupported = false;
 
+#ifdef HAVE_MSYS_CONSOLE_HOST
+static bool native_gdb = true;
+#else
 static bool native_gdb = false;
+#endif
 static char *debugger_path = NULL;  /* Path to debugger to use */
 
 /* Set to 1 if the user requested cgdb to wait for the debugger to attach. */

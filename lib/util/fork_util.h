@@ -16,6 +16,7 @@ typedef struct pty_pair *pty_pair_ptr;
  * A new pty_pair on success, NULL on error.
  */
 pty_pair_ptr pty_pair_create(void);
+pty_pair_ptr pty_pair_create_named_pipe(void);
 
 /**
  * Destroy the pty pair context.

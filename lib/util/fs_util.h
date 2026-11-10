@@ -86,4 +86,9 @@ int fs_util_file_exists_in_path(const std::string &filePath);
  */
 int fs_verify_file_exists(const std::string &path);
 
+/* Normalize Windows debug-info paths on MSYS/Cygwin, without probing files.
+ * Also repairs GDB's comp_dir/drive:/absolute-path concatenation. */
+std::string fs_util_debugger_path(const std::string &path);
+
+
 #endif

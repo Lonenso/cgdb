@@ -22,6 +22,10 @@ void usage(void)
 #else
             "   -h          Print help (this message) and then exit.\n"
 #endif
+#ifdef HAVE_MSYS_CONSOLE_HOST
+            "   --native-gdb Native Windows GDB mode (the default on MSYS2).\n"
+            "                Requires a UCRT64 GDB with the Windows new-ui fixes.\n"
+#endif
             "   -d          Set debugger to use.\n"
             "   -w          Wait for debugger to attach before starting.\n"
             "   --          Marks the end of CGDB's options.\n");

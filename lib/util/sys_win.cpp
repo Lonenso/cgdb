@@ -12,6 +12,10 @@
 #include "sys_util.h"
 #include "sys_win.h"
 
+#if HAVE_SYS_IOCTL_H
+#include <sys/ioctl.h>
+#endif
+
 const int SWIN_A_NORMAL = A_NORMAL;
 const int SWIN_A_STANDOUT = A_STANDOUT;
 const int SWIN_A_UNDERLINE = A_UNDERLINE;
@@ -86,12 +90,56 @@ SWINDOW *swin_initscr()
     return win;
 }
 
+/* Resize and shell-resume can leave the MSYS console driver's margins
+ * based on its console size rather than the PTY size. Repair them after
+ * curses has finished its update, without changing the cursor it left. */
+static bool scroll_region_needs_sync = true;
+
+static void swin_sync_scroll_region()
+{
+#if defined(__CYGWIN__) && defined(TIOCGWINSZ)
+    struct winsize size = {};
+    if (ioctl(fileno(stdout), TIOCGWINSZ, &size) != 0 ||
+            size.ws_row == 0 || size.ws_col == 0)
+        return;
+
+    char *csr = tigetstr("csr");
+    char *save = tigetstr("sc");
+    char *restore = tigetstr("rc");
+    if (!csr || csr == (char *)-1 ||
+            !save || save == (char *)-1 ||
+            !restore || restore == (char *)-1)
+        return;
+
+    /* csr can home the cursor. In particular, after endwin() we must keep
+     * the shell cursor restored by rmcup, rather than force the last row. */
+    putp(save);
+    putp(tparm(csr, 0L, (long)size.ws_row - 1,
+                0L, 0L, 0L, 0L, 0L, 0L, 0L));
+    putp(restore);
+    fflush(stdout);
+#endif
+}
+
+static int swin_finish_update(int result, bool resumed)
+{
+    if (result != ERR && (scroll_region_needs_sync || resumed)) {
+        swin_sync_scroll_region();
+        scroll_region_needs_sync = false;
+    }
+    return result;
+}
+
 int swin_endwin()
 {
     int result = 0;
-    
-    if (initscr_intialized)
+
+    if (initscr_intialized) {
         result = endwin();
+        if (result != ERR)
+            swin_sync_scroll_region();
+        scroll_region_needs_sync = true;
+    }
 
     return result;
 }
@@ -147,7 +195,10 @@ bool swin_supports_default_color_pairs_extension()
 
 int swin_resizeterm(int lines, int columns)
 {
-    return resizeterm(lines, columns);
+    int result = resizeterm(lines, columns);
+    if (result != ERR)
+        scroll_region_needs_sync = true;
+    return result;
 }
 
 int swin_scrl(int n)
@@ -286,7 +337,8 @@ int swin_mvwprintw(SWINDOW *win, int y, int x, const char *fmt, ...)
 
 int swin_refresh()
 {
-    return refresh();
+    bool resumed = isendwin();
+    return swin_finish_update(refresh(), resumed);
 }
 
 int swin_wnoutrefresh(SWINDOW *win)
@@ -296,12 +348,14 @@ int swin_wnoutrefresh(SWINDOW *win)
 
 int swin_wrefresh(SWINDOW *win)
 {
-    return wrefresh((WINDOW *)win);
+    bool resumed = isendwin();
+    return swin_finish_update(wrefresh((WINDOW *)win), resumed);
 }
 
 int swin_doupdate()
 {
-    return doupdate();
+    bool resumed = isendwin();
+    return swin_finish_update(doupdate(), resumed);
 }
 
 int swin_init_pair(int pair, int f, int b)

@@ -1,0 +1,12 @@
+set timeout 15
+foreach debugger {/does-not-exist/cgdb-test-gdb /usr/bin/false} {
+    set started [clock milliseconds]
+    spawn [lindex $argv 0] -d $debugger -nx -q
+    expect {
+        eof {}
+        timeout {puts stderr "FAIL: startup did not terminate"; exit 1}
+    }
+    set result [wait]
+    if {[lindex $result 3] == 0} {puts stderr "FAIL: startup reported success"; exit 1}
+    puts "PASS: failed startup bounded: $debugger ([expr {[clock milliseconds]-$started}] ms)"
+}

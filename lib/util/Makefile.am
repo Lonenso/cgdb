@@ -10,6 +10,7 @@ libcgdbutil_a_SOURCES = \
     fs_util.h \
     io.cpp \
     io.h \
+    native_console_protocol.h \
     pseudo.cpp \
     pseudo.h \
     stretchy.h \

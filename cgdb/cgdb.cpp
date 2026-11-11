@@ -126,15 +126,6 @@ std::shared_ptr<kui_map_set> kui_imap;
  * If kui_input_acceptable is set to 1, then input can be read from
  * the kui. Otherwise, some part of CGDB is waiting for more events to happen.
  *
- * For example, when the user types 'o' at the CGDB source window, the
- * user is requesting the file dialog to open. CGDB must first ask GDB for 
- * the list of files. While it is retrieving these files, CGDB shouldn't 
- * shoot through the rest of the kui keys available. If the user had
- * typed 'o /main' they would want to open the file dialog and start 
- * searching for a file that had the substring 'main' in it. So, CGDB must
- * first ensure all the files are retrieved, displayed in the file
- * dialog, and ensure the file dialog is ready to receive keys from the 
- * user before the input is allowed to hit the file dialog.
  */
 int kui_input_acceptable = 1;
 
@@ -589,50 +580,35 @@ static void update_file_position(const tgdb_file_position &tfp)
 // File existence is checked only when selecting a source file.
 // Newly visited disassembly buffers are added whenever the dialog is opened.
 static bool source_dialog_cached = false;
+static bool source_dialog_loading = false;
 
 void cgdb_open_source_dialog()
 {
-    if (!source_dialog_cached) {
+    // Display immediately, keeping the event loop and cancellation responsive
+    // while GDB enumerates sources. Reopening must not enqueue another query.
+    if (!source_dialog_cached && !source_dialog_loading) {
+        if_clear_filedlg();
+        source_dialog_loading = true;
+        if_set_filedlg_loading(true);
         tgdb_request_inferiors_source_files(tgdb);
-        return;
     }
     for (list_node *node = if_get_sview()->list_head; node; node = node->next)
         if (node->path[0] == '*')
             if_add_filedlg_choice(node->path);
     if_set_focus(FILE_DLG);
-    kui_input_acceptable = 1;
 }
 
 static void update_source_files(const std::list<std::string> &source_files)
 {
-    sviewer *sview = if_get_sview();
-    struct list_node *cur;
-    int added_files = 0;
+    for (const auto &path : source_files)
+        if_add_filedlg_choice(path);
 
-    if_clear_filedlg();
-
-    /* Search for a node which contains this address */
-    for (cur = sview->list_head; cur != NULL; cur = cur->next) {
-        if (cur->path[0] == '*')
-        {
-            if (if_add_filedlg_choice(cur->path) == 0)
-                ++added_files;
-        }
-    }
-
-    for (const auto &path : source_files) {
-        if (if_add_filedlg_choice(path) == 0)
-            ++added_files;
-    }
-
-    if (added_files == 0) {
-        if_display_message(WIN_REFRESH, "Error:",
-            " No source files reported by GDB. Check that the program has debug info.");
-    } else {
-        if_set_focus(FILE_DLG);
-        source_dialog_cached = true;
-    }
-    kui_input_acceptable = 1;
+    source_dialog_loading = false;
+    source_dialog_cached = !source_files.empty();
+    if_set_filedlg_loading(false);
+    // A cancelled dialog stays closed; the result is cached for the next 'o'.
+    if (if_get_focus() == FILE_DLG)
+        if_draw();
 }
 
 static void update_disassemble(bool pc, uint64_t addr_start, uint64_t addr_end,

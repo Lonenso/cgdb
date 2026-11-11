@@ -40,6 +40,7 @@ struct file_buffer {
 struct filedlg {
     std::unordered_set<std::string> seen;
     bool needs_sort = false;
+    bool loading = false;
     std::string selected_before_sort;
     struct file_buffer *buf;    /* All of the widget's data ( files ) */
     struct hl_regex_info *last_hlregex;
@@ -148,6 +149,11 @@ int filedlg_add_file_choice(struct filedlg *fd, const char *file_choice)
         fd->buf->max_width = length;
 
     return 0;
+}
+
+void filedlg_set_loading(struct filedlg *fd, bool loading)
+{
+    fd->loading = loading;
 }
 
 void filedlg_clear(struct filedlg *fd)
@@ -321,15 +327,20 @@ int filedlg_display(struct filedlg *fd)
     statusbar = hl_groups_get_attr(hl_groups_instance, HLG_STATUS_BAR);
     arrow_attr = hl_groups_get_attr(hl_groups_instance, HLG_SELECTED_LINE_ARROW);
 
-    /* Check that a file is loaded */
-    if (fd == NULL || fd->buf == NULL || fd->buf->files == NULL) {
-        swin_wrefresh(fd->win);
-        return 0;
-    }
-
     /* Initialize variables */
     height = swin_getmaxy(fd->win);
     width = swin_getmaxx(fd->win);
+
+    if (fd->loading || count == 0) {
+        swin_werase(fd->win);
+        const char *message = fd->loading
+            ? "Loading source files... Press q to cancel."
+            : "No source files reported by GDB. Press q to close.";
+        // Avoid negative coordinates in narrow terminals.
+        swin_mvwprintw(fd->win, 0, 0, "%.*s", width, message);
+        swin_wrefresh(fd->win);
+        return 0;
+    }
 
     /* The status bar and display line 
      * Fake the display function to think the height is 2 lines less */
@@ -565,9 +576,12 @@ int filedlg_recv_char(struct filedlg *fd, int key, char *file, int last_key_pres
 
     filedlg_display(fd);
 
+    if (key == 'q')
+        return -1;
+    if (fd->loading || sbcount(fd->buf->files) == 0)
+        return 0;
+
     switch (key) {
-        case 'q':
-            return -1;
             /* Vertical scrolling */
         case CGDB_KEY_DOWN:
         case 'j':

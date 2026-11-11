@@ -65,4 +65,6 @@ void filedlg_display_message(struct filedlg *fd, char *message);
  */
 int filedlg_display(struct filedlg *fd);
 
+void filedlg_set_loading(struct filedlg *fd, bool loading);
+
 #endif /* _FILEDLG_H_ */

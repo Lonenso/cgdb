@@ -247,4 +247,7 @@ int get_gdb_width(void);
 // Set the no highlight searching flag
 void if_set_no_hlsearch(void);
 
+/* Update the source dialog loading state without changing focus. */
+void if_set_filedlg_loading(bool loading);
+
 #endif

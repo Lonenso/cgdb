@@ -1278,10 +1278,6 @@ static void source_input(struct sviewer *sview, int key)
         case 'o':
             /* Causes file dialog to be opened */
         {
-            extern int kui_input_acceptable;
-
-            kui_input_acceptable = 0;
-
             cgdb_open_source_dialog();
         }
             break;
@@ -1709,6 +1705,11 @@ void if_display_logo(int reset)
 struct sviewer *if_get_sview()
 {
     return src_viewer;
+}
+
+void if_set_filedlg_loading(bool loading)
+{
+    filedlg_set_loading(fd, loading);
 }
 
 void if_clear_filedlg(void)

@@ -296,6 +296,9 @@ tgdb_commands_process_info_sources(struct tgdb *tgdb,
         tgdb_commands_send_source_files(tgdb, source_files);
 
         gdbwire_mi_command_free(mi_command);
+    } else {
+        // Complete the UI request even when GDB rejects the query.
+        tgdb_commands_send_source_files(tgdb, std::list<std::string>());
     }
 }
 

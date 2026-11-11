@@ -144,6 +144,15 @@ int swin_endwin()
     return result;
 }
 
+int swin_resume()
+{
+    // ncurses' SIGTSTP handler bypasses the wrappers when it restores the
+    // screen. Do not trust its physical-screen cache or the console margins.
+    scroll_region_needs_sync = true;
+    clearok(stdscr, TRUE);
+    return swin_refresh();
+}
+
 int swin_lines()
 {
     return LINES;

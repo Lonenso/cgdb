@@ -758,7 +758,14 @@ static int cgdb_handle_signal_in_main_loop(int fd)
         return -1;
     }
 
-    tgdb_signal_notification(tgdb, signo);
+    if (signo == SIGCONT) {
+        // Refresh after fg, including an externally initiated SIGSTOP.
+        swin_resume();
+        if_resize_term();
+        if_draw();
+    } else {
+        tgdb_signal_notification(tgdb, signo);
+    }
 
     return 0;
 }

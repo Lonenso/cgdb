@@ -1,0 +1,45 @@
+# Driven by suspend.py. Use a real interactive shell for job control.
+set timeout 12
+proc need {pattern} {
+    expect {
+        -re $pattern {}
+        timeout {puts stderr "FAIL: waiting for $pattern"; exit 1}
+        eof {puts stderr "FAIL: EOF waiting for $pattern"; exit 1}
+    }
+}
+set stty_init "rows 40 columns 120"
+set env(PS1) "JOB_SHELL> "
+set env(PROMPT_COMMAND) ""
+spawn /usr/bin/bash --noprofile --norc -i
+need {JOB_SHELL> }
+send -- "$env(CGDB_TEST_COMMAND)\r"
+need {\(gdb\)}
+after 500
+send "\033"
+after 100
+for {set i 0} {$i < 3} {incr i} {
+    expect -timeout 1 {timeout {}}
+    puts "SNAPSHOT_BEFORE_$i"
+    send "\032"
+    need {JOB_SHELL> }
+    send "printf 'OUTSIDE_%s\\n' SHELL\r"
+    need {OUTSIDE_SHELL}
+    need {JOB_SHELL> }
+    send "fg\r"
+    need {main}
+    expect -timeout 1 {timeout {}}
+    puts "SNAPSHOT_AFTER_$i"
+    send "i"
+    # A different computed result each time cannot match a replayed old screen.
+    send "print 880000+[expr {39+$i}]\r"
+    need [expr {880039+$i}]
+    send "\033"
+    after 100
+}
+send "i"
+send "quit\r"
+need {JOB_SHELL> }
+send "exit\r"
+expect eof
+set result [wait]
+if {[lindex $result 3] != 0} {exit 1}

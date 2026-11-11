@@ -1,0 +1,31 @@
+Job-control resume regression
+=============================
+
+Dependencies: Bash, Expect, Python 3 and pyte (test-only).
+Compile a small program containing main with debug information, then run:
+
+  python3 testsuite/suspend.py /path/to/cgdb /path/to/gdb /path/to/program
+
+For a native Windows Python driver, --expect can select MSYS Expect. The
+environment must supply the runtime DLLs and optional GDB_DATA_DIRECTORY,
+PYTHONHOME and TERMINFO required by the tested build.
+
+The test uses an actual interactive Bash and PTY, suspends with Ctrl-Z, writes
+shell output, and resumes with fg three times. It compares all terminal rows
+before and after each resume and evaluates a new GDB expression each time.
+The 40x120 test PTY intentionally differs from the common MSYS console size.
+No terminal dimensions are hardcoded in the application fix.
+
+On MSYS runtime 3.6.4 the old resume path used stale curses dimensions after
+fg, clipping the GDB pane and shifting rows on subsequent resumes. Handling
+SIGCONT through the main loop forces a repaint, marks the scroll margins for
+resynchronization and rereads the actual PTY dimensions. ncurses continues to
+own SIGTSTP and the terminal-mode save/restore sequence.
+
+Validation (2026-11-11)
+-----------------------
+The three-cycle test passed on MSYS runtime 3.6.4 with native UCRT64 GDB
+and on Linux with Linux GDB. Disabling only the SIGCONT main-loop branch
+in the MSYS build restored clipping after fg and failed the second live GDB
+command; restoring the branch passed again. A separate Linux PTY check also
+covered shrinking and enlarging the terminal while CGDB was suspended.

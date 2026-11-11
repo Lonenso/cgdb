@@ -71,6 +71,9 @@ SWINDOW *swin_initscr();
 /* The program must call endwin for each terminal being used before exiting. */
 int swin_endwin();
 
+/* Repaint after job-control resume, including terminal scroll margins. */
+int swin_resume();
+
 int swin_lines();       /* height of screen */
 int swin_cols();        /* width of screen */
 int swin_colors();      /* number of colors supported */

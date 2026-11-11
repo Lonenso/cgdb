@@ -116,29 +116,6 @@ std::shared_ptr<kui_map_set> kui_map;
 std::shared_ptr<kui_map_set> kui_imap;
 
 /**
- * This allows CGDB to know if it is acceptable to read more input from
- * the KUI at this particular moment. Under certain circumstances, CGDB may 
- * have to complete a particular communication message to GDB, in while doing
- * so, may not want to process's the users keystrokes. This flag is purely for
- * CGDB to keep track of if it wants to read from the KUI. The KUI is always
- * ready.
- *
- * If kui_input_acceptable is set to 1, then input can be read from
- * the kui. Otherwise, some part of CGDB is waiting for more events to happen.
- *
- * For example, when the user types 'o' at the CGDB source window, the
- * user is requesting the file dialog to open. CGDB must first ask GDB for 
- * the list of files. While it is retrieving these files, CGDB shouldn't 
- * shoot through the rest of the kui keys available. If the user had
- * typed 'o /main' they would want to open the file dialog and start 
- * searching for a file that had the substring 'main' in it. So, CGDB must
- * first ensure all the files are retrieved, displayed in the file
- * dialog, and ensure the file dialog is ready to receive keys from the 
- * user before the input is allowed to hit the file dialog.
- */
-int kui_input_acceptable = 1;
-
-/**
  * This pipe is used for passing SIGWINCH from the handler to the main loop.
  *
  * A separate pipe is used for SIGWINCH because when the user resizes the
@@ -476,26 +453,10 @@ static int user_input(void)
     return 0;
 }
 
-/**
- * This will usually process all the input that the KUI has.
- *
- * However, it's possible that one of the keys the user sends to CGDB 
- * switches the state of CGDB in such a way, that CGDB has to do some I/O
- * with GDB before the keys can continue to be sent to CGDB. For this reason,
- * this loop can return before all the KUI's data has been used, in order to
- * give the main loop a chance to run a GDB command.
- *
- * \return
- * 0 on success or -1 on error
- */
+/* Process all currently available keyboard input. */
 static int user_input_loop()
 {
     do {
-        /* There are reasons that CGDB should wait to get more info from the kui.
-         * See the documentation for kui_input_acceptable */
-        if (!kui_input_acceptable)
-            return 0;
-
         if (user_input() == -1) {
             clog_error(CLOG_CGDB, "user_input_loop failed");
             return -1;
@@ -587,52 +548,39 @@ static void update_file_position(const tgdb_file_position &tfp)
 /* This is a list of all the source files */
 // The source list and sorted dialog are cached for this session.
 // File existence is checked only when selecting a source file.
-// Newly visited disassembly buffers are added whenever the dialog is opened.
+// Newly visited source and disassembly buffers are added on each opening.
 static bool source_dialog_cached = false;
+static bool source_dialog_pending = false;
 
 void cgdb_open_source_dialog()
 {
-    if (!source_dialog_cached) {
-        tgdb_request_inferiors_source_files(tgdb);
-        return;
-    }
+    // Show already visited sources immediately; the complete GDB query can be
+    // slow for large executables or source paths on unavailable network shares.
     for (list_node *node = if_get_sview()->list_head; node; node = node->next)
-        if (node->path[0] == '*')
-            if_add_filedlg_choice(node->path);
+        if_add_filedlg_choice(node->path);
+
+    bool request = !source_dialog_cached && !source_dialog_pending;
+    if (request)
+        source_dialog_pending = true;
+    if_set_filedlg_loading(source_dialog_pending);
     if_set_focus(FILE_DLG);
-    kui_input_acceptable = 1;
+    if (request)
+        tgdb_request_inferiors_source_files(tgdb);
 }
 
 static void update_source_files(const std::list<std::string> &source_files)
 {
-    sviewer *sview = if_get_sview();
-    struct list_node *cur;
-    int added_files = 0;
+    // Append in one batch. The dialog deduplicates and preserves selection
+    // when its deferred sort runs; do not discard the immediately shown list.
+    for (const auto &path : source_files)
+        if_add_filedlg_choice(path);
 
-    if_clear_filedlg();
-
-    /* Search for a node which contains this address */
-    for (cur = sview->list_head; cur != NULL; cur = cur->next) {
-        if (cur->path[0] == '*')
-        {
-            if (if_add_filedlg_choice(cur->path) == 0)
-                ++added_files;
-        }
-    }
-
-    for (const auto &path : source_files) {
-        if (if_add_filedlg_choice(path) == 0)
-            ++added_files;
-    }
-
-    if (added_files == 0) {
-        if_display_message(WIN_REFRESH, "Error:",
-            " No source files reported by GDB. Check that the program has debug info.");
-    } else {
-        if_set_focus(FILE_DLG);
-        source_dialog_cached = true;
-    }
-    kui_input_acceptable = 1;
+    source_dialog_pending = false;
+    source_dialog_cached = !source_files.empty();
+    if_set_filedlg_loading(false);
+    // A late reply must not reopen a dialog the user has already dismissed.
+    if (if_get_focus() == FILE_DLG)
+        if_draw();
 }
 
 static void update_disassemble(bool pc, uint64_t addr_start, uint64_t addr_end,
@@ -910,12 +858,7 @@ static int main_loop(void)
                 return -1;
             }
 
-            /* When the file dialog is opened, the user input is blocked, 
-             * until GDB returns all the files that should be displayed,
-             * and the file dialog can open, and be prepared to receive 
-             * input. So, if we are in the file dialog, and are no longer
-             * waiting for the gdb command, then read the input.
-             */
+            /* Drain any keyboard input already buffered by KUI. */
             if (kui_ctx->cangetkey()) {
                 user_input_loop();
             }

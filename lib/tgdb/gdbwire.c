@@ -2135,7 +2135,10 @@ gdbwire_mi_result_alloc(void)
 void
 gdbwire_mi_result_free(struct gdbwire_mi_result *param)
 {
-    if (param) {
+    /* Source-file replies can contain tens of thousands of siblings. Walk
+     * those iteratively so list length does not consume the C stack. */
+    while (param) {
+        struct gdbwire_mi_result *next = param->next;
         if (param->variable) {
             free(param->variable);
             param->variable = NULL;
@@ -2155,11 +2158,8 @@ gdbwire_mi_result_free(struct gdbwire_mi_result *param)
                 break;
         }
 
-        gdbwire_mi_result_free(param->next);
-        param->next = NULL;
-
         free(param);
-        param = NULL;
+        param = next;
     }
 }
 

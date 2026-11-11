@@ -25,7 +25,6 @@
 #include "highlight.h"
 #include "sources.h"
 #include "kui_term.h"
-#include "kui_manager.h"
 #include "highlight_groups.h"
 
 struct file_buffer {
@@ -40,6 +39,8 @@ struct file_buffer {
 struct filedlg {
     std::unordered_set<std::string> seen;
     bool needs_sort = false;
+    bool loading = false;
+    bool search_pending = false;
     std::string selected_before_sort;
     struct file_buffer *buf;    /* All of the widget's data ( files ) */
     struct hl_regex_info *last_hlregex;
@@ -173,6 +174,8 @@ void filedlg_clear(struct filedlg *fd)
 
 static int clamp_line(struct filedlg *fd, int line)
 {
+    if (!sbcount(fd->buf->files))
+        return 0;
     if (line < 0)
         line = 0;
     if (line >= sbcount(fd->buf->files))
@@ -237,7 +240,7 @@ static int wrap_line(struct file_buffer *buffer, int line)
 static int filedlg_search_regex(struct filedlg *fd, const char *regex,
         int opt, int direction, int icase)
 {
-    if (!fd || !fd->buf)
+    if (!fd || !fd->buf || !sbcount(fd->buf->files))
         return -1;
 
     if (regex && regex[0]) {
@@ -290,8 +293,15 @@ static int filedlg_search_regex(struct filedlg *fd, const char *regex,
     return 0;
 }
 
+void filedlg_set_loading(struct filedlg *fd, bool loading)
+{
+    fd->loading = loading;
+}
+
 int filedlg_display(struct filedlg *fd)
 {
+    if (!fd || !fd->buf)
+        return 0;
     if (fd->needs_sort) {
         std::sort(fd->buf->files, fd->buf->files + sbcount(fd->buf->files),
             [](const char *a, const char *b) {
@@ -303,6 +313,12 @@ int filedlg_display(struct filedlg *fd)
             if (fd->selected_before_sort == fd->buf->files[i])
                 fd->buf->sel_line = fd->buf->sel_rline = i;
         fd->selected_before_sort.clear();
+        fd->buf->sel_rline = fd->buf->sel_line;
+        if (regex_search || fd->search_pending)
+            filedlg_search_regex(fd, regex_line, regex_search ? 1 : 2,
+                regex_direction, 1);
+        if (!fd->loading)
+            fd->search_pending = false;
         fd->needs_sort = false;
     }
     char fmt[16];
@@ -314,18 +330,15 @@ int filedlg_display(struct filedlg *fd)
     int arrow_attr;
     int count = sbcount(fd->buf->files);
     int hlsearch = cgdbrc_get_int(CGDBRC_HLSEARCH);
-    static const char label[] = "Select a file or press q to cancel.";
+    const char *label = fd->loading
+        ? "Select a file (loading sources...) or press q to cancel."
+        : count ? "Select a file or press q to cancel."
+                : "No source files reported. Press q to close.";
 
     swin_curs_set(0);
 
     statusbar = hl_groups_get_attr(hl_groups_instance, HLG_STATUS_BAR);
     arrow_attr = hl_groups_get_attr(hl_groups_instance, HLG_SELECTED_LINE_ARROW);
-
-    /* Check that a file is loaded */
-    if (fd == NULL || fd->buf == NULL || fd->buf->files == NULL) {
-        swin_wrefresh(fd->win);
-        return 0;
-    }
 
     /* Initialize variables */
     height = swin_getmaxy(fd->win);
@@ -491,75 +504,45 @@ void filedlg_display_message(struct filedlg *fd, char *message)
     swin_wrefresh(fd->win);
 }
 
-/* capture_regex: Captures a regular expression from the user.
- * ---------------
- *  Side Effect: 
- *
- *  regex_line: The regex the user has entered.
- *  regex_line_pos: The next available index into regex_line.
- *
- * Return Value: 0 if user gave a regex, otherwise 1.
- */
-static int capture_regex(struct filedlg *fd)
+bool filedlg_is_searching()
 {
-    int c;
-    extern kui_manager *kui_ctx;
+    return regex_search != 0;
+}
 
-    /* Initialize the function for finding a regex and tell user */
-    regex_search = 1;
-    regex_line_pos = 0;
-    regex_line[regex_line_pos] = '\0';
-    filedlg_display(fd);
-
-    do {
-        c = kui_ctx->getkey_blocking();
-
-        if (regex_line_pos == (MAX_LINE - 1) && !(c == CGDB_KEY_ESC || c == 8 || c == 127))
-            continue;
-
-        /* Quit the search if the user hit escape */
-        if (c == CGDB_KEY_ESC) {
-            regex_line_pos = 0;
-            regex_line[regex_line_pos] = '\0';
-            regex_search = 0;
-            filedlg_search_regex(fd, regex_line, 2, regex_direction, 1);
-            filedlg_display(fd);
-            return 1;
-        }
-
-        /* If the user hit enter, then a successful regex has been received */
-        if (c == '\r' || c == '\n' || c == CGDB_KEY_CTRL_M) {
-            regex_line[regex_line_pos] = '\0';
-            break;
-        }
-
-        /* If the user hit backspace or delete remove a char */
-        if (c == 8 || c == 127) {
+/* Edit one search key per event-loop iteration, so pending source replies
+ * and resize events continue to be processed while the user is searching. */
+static void edit_regex(struct filedlg *fd, int key)
+{
+    if (key == CGDB_KEY_ESC) {
+        regex_line_pos = 0;
+        regex_line[0] = '\0';
+        regex_search = 0;
+        fd->search_pending = false;
+        filedlg_search_regex(fd, regex_line, 2, regex_direction, 1);
+    } else if (key == '\r' || key == '\n' || key == CGDB_KEY_CTRL_M) {
+        regex_search = 0;
+        fd->search_pending = fd->loading;
+        filedlg_search_regex(fd, regex_line, 2, regex_direction, 1);
+    } else {
+        if (key == 8 || key == 127) {
             if (regex_line_pos > 0)
                 --regex_line_pos;
-
-            regex_line[regex_line_pos] = '\0';
-            filedlg_search_regex(fd, regex_line, 1, regex_direction, 1);
-            filedlg_display(fd);
-            continue;
+        } else if (key >= 0 && key < 256 && regex_line_pos < MAX_LINE - 1) {
+            regex_line[regex_line_pos++] = key;
         }
-
-        /* Add a char, search and draw */
-        regex_line[regex_line_pos++] = c;
         regex_line[regex_line_pos] = '\0';
         filedlg_search_regex(fd, regex_line, 1, regex_direction, 1);
-        filedlg_display(fd);
-    } while (1);
-
-    /* Finished */
-    regex_search = 0;
-    filedlg_search_regex(fd, regex_line, 2, regex_direction, 1);
+    }
     filedlg_display(fd);
-    return 0;
 }
 
 int filedlg_recv_char(struct filedlg *fd, int key, char *file, int last_key_pressed)
 {
+    if (regex_search) {
+        edit_regex(fd, key);
+        return 0;
+    }
+
     /* Initialize size variables */
     int height = swin_getmaxy(fd->win);
 
@@ -606,7 +589,10 @@ int filedlg_recv_char(struct filedlg *fd, int key, char *file, int last_key_pres
 
             /* Capturing regular expressions */
             filedlg_search_regex_init(fd);
-            capture_regex(fd);
+            regex_search = 1;
+            regex_line_pos = 0;
+            regex_line[0] = '\0';
+            fd->search_pending = false;
             break;
         case 'n':
             filedlg_search_regex(fd, regex_line, 2, regex_direction, 1);

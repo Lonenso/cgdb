@@ -37,6 +37,8 @@ int filedlg_add_file_choice(struct filedlg *fd, const char *file_choice);
  * ______________
  */
 void filedlg_clear(struct filedlg *fd);
+void filedlg_set_loading(struct filedlg *fd, bool loading);
+bool filedlg_is_searching();
 
 /* filedlg_recv_char: Sens a character to the filedlg.
  *

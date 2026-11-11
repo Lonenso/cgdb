@@ -246,8 +246,7 @@ The @dfn{file dialog window} is available to help the user view and select
 which file they would like to view.  It provides the user with a list of all 
 the files that make up the program being debugged.  If there are no files 
 available, because there is no program being debugged or because there is
-no debug symbols, then the file dialog will not open and a message will be 
-displayed at the status bar.
+no debug symbols, then the dialog displays an empty-list message.
 
 You can get to the file dialog by hitting @code{o} when you are at the source
 window.  Once you enter the file dialog, it is possible to leave it by hitting 
@@ -402,10 +401,15 @@ next reverse search.
 
 @item o
 Open the file dialog. The sorted source list is cached for the session,
-and reopening the dialog preserves the selected file. File existence is
+and reopening the dialog preserves the selected file. On the first opening,
+already visited files appear immediately while GDB obtains the full list.
+The heading indicates loading, and @code{q} can close the dialog while the
+request is pending. Its reply updates the cache without reopening the dialog.
+Search input remains responsive during loading and is applied to arriving files.
+File existence is
 checked when a file is selected, so unavailable paths can appear in the list;
 selecting one displays an error and leaves the dialog open. Newly visited
-disassembly buffers are added when the dialog is reopened.
+source files and disassembly buffers are added when the dialog is reopened.
 
 @item spacebar
 Sets a breakpoint at the current line number.

@@ -24,6 +24,7 @@ config/install-sh
 config/mdate-sh
 config/missing
 config/texinfo.tex
+config/test-driver
 config/ylwrap
 config.h.in~
 configure.ac~

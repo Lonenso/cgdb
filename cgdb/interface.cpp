@@ -1277,13 +1277,7 @@ static void source_input(struct sviewer *sview, int key)
             break;
         case 'o':
             /* Causes file dialog to be opened */
-        {
-            extern int kui_input_acceptable;
-
-            kui_input_acceptable = 0;
-
             cgdb_open_source_dialog();
-        }
             break;
         case ' ':
         {
@@ -1531,6 +1525,10 @@ static int cgdb_input(int key, int *last_key)
 
 int internal_if_input(int key, int *last_key)
 {
+    // Search editing consumes Escape itself and must not block GDB replies.
+    if (focus == FILE_DLG && filedlg_is_searching())
+        return filedlg_recv_char(fd, key, NULL, last_key_pressed);
+
     /* Normally, CGDB_KEY_ESC, but can be configured by the user */
     int cgdb_mode_key = cgdbrc_get_int(CGDBRC_CGDB_MODE_KEY);
 
@@ -1714,6 +1712,11 @@ struct sviewer *if_get_sview()
 void if_clear_filedlg(void)
 {
     filedlg_clear(fd);
+}
+
+void if_set_filedlg_loading(bool loading)
+{
+    filedlg_set_loading(fd, loading);
 }
 
 int if_add_filedlg_choice(const std::string &filename)

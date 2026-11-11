@@ -1,0 +1,89 @@
+# Use a large debug line table to exercise asynchronous file-list population.
+# Arguments: CGDB GDB [PROGRAM]. Omit PROGRAM to test an empty source list.
+# Optional GDB_DATA_DIRECTORY configures GDB data.
+# Generate PROGRAM with source-list-fixture.py and at least 10000 files.
+# Set SOURCE_DIALOG_SEARCH=1 to search while the first reply is pending.
+set timeout 45
+proc need {pattern} {
+    expect {
+        -re $pattern {}
+        timeout {puts stderr "FAIL: waiting for $pattern"; exit 1}
+        eof {puts stderr "FAIL: EOF waiting for $pattern"; exit 1}
+    }
+}
+set options {}
+if {[info exists env(GDB_DATA_DIRECTORY)]} {
+    lappend options --data-directory=$env(GDB_DATA_DIRECTORY)
+}
+spawn [lindex $argv 0] -d [lindex $argv 1] -nx -q {*}$options {*}[lrange $argv 2 2]
+need {\(gdb\)}
+after 300
+send "\033"
+after 100
+if {[llength $argv] == 2} {
+    send "o"
+    need {No source files reported}
+    send "j999999G/nothing\rnnNN\r"
+    after 100
+    send "q"
+    after 100
+    send "o"
+    need {No source files reported}
+    send "q"
+    after 100
+    send ":quit\r"
+    expect eof
+    set result [wait]
+    if {[lindex $result 3] != 0} {exit 1}
+    puts "PASS: empty list, search, navigation, retry and quit"
+    exit 0
+}
+set start [clock milliseconds]
+send "o"
+need {Select a file}
+puts "OPEN_MS=[expr {[clock milliseconds]-$start}]"
+if {[info exists env(SOURCE_DIALOG_SEARCH)]} {
+    # Leave search editing active while GDB delivers the list. The reply must
+    # still be processed and the newly added matching file must become visible.
+    send {/file9999[.]cpp}
+    need {file9999[.]cpp}
+    send "\033"
+    after 100
+}
+# Cancel immediately, before the large MI reply. Its callback must not steal
+# focus when it arrives. Entering GDB and evaluating verifies that behavior.
+send "q"
+after 100
+send "i"
+send "print 928000+37\r"
+need {928037}
+# Repeat after the first command has completed, so a late list callback cannot
+# silently leave focus in the file dialog.
+send "print 918000+29\r"
+need {918029}
+after 200
+send "\033"
+after 100
+send "o"
+# Curses may update the loading heading using cursor moves rather than emit
+# the complete ready heading. Wait for an actual fixture filename instead.
+need {file[0-9]+[.]cpp}
+send "q"
+after 100
+set start [clock milliseconds]
+send "o"
+need {Select a file}
+puts "CACHED_OPEN_MS=[expr {[clock milliseconds]-$start}]"
+send {/file9999[.]cpp}
+send "\r"
+need {file9999[.]cpp}
+# Exercise clamping an out-of-range line number in the populated list.
+send "999999G"
+after 100
+send "q"
+after 100
+send ":quit\r"
+expect eof
+set result [wait]
+if {[lindex $result 3] != 0} {puts stderr "FAIL: exit $result"; exit 1}
+puts "PASS: responsive open, cancel, debugger focus, cached reopen and search"

@@ -293,9 +293,11 @@ tgdb_commands_process_info_sources(struct tgdb *tgdb,
             files = files->next;
         }
 
-        tgdb_commands_send_source_files(tgdb, source_files);
-
         gdbwire_mi_command_free(mi_command);
+        tgdb_commands_send_source_files(tgdb, source_files);
+    } else {
+        // Complete the pending dialog request even when GDB rejects it.
+        tgdb_commands_send_source_files(tgdb, std::list<std::string>());
     }
 }
 
@@ -1118,13 +1120,18 @@ static int tgdb_handle_sigchld(struct tgdb *tgdb)
 static void tgdb_handle_control_c(struct tgdb *tgdb)
 {
     if (tgdb->control_c) {
+        bool cancelled_sources = false;
         tgdb_request_ptr_list::iterator iter = tgdb->command_requests->begin();
         for (; iter != tgdb->command_requests->end(); ++iter) {
+            if ((*iter)->header == TGDB_REQUEST_INFO_SOURCES)
+                cancelled_sources = true;
             tgdb_request_destroy(*iter);
         }
         tgdb->command_requests->clear();
 
         tgdb->control_c = 0;
+        if (cancelled_sources)
+            tgdb_commands_send_source_files(tgdb, std::list<std::string>());
     }
 }
 

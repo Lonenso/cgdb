@@ -112,6 +112,7 @@ void if_display_message(enum win_refresh dorefresh,
  * -----------------
  */
 void if_clear_filedlg(void);
+void if_set_filedlg_loading(bool loading);
 
 /* if_add_fildlg_choice: adds the file filename to the choices the user gets.
  * ---------------------

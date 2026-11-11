@@ -1,0 +1,44 @@
+Source dialog regression and ablation checks
+===========================================
+
+The POSIX PTY test was adapted from feature/fedora-source-dialog-responsive
+(54b274e). Run it against a non-MSYS CGDB build with Python 3:
+
+  python3 testsuite/source-dialog.py /path/to/cgdb
+
+Optional trailing case names select individual checks:
+  large empty error narrow search
+
+The fake MI peer withholds its source reply until the test explicitly releases
+it. This makes cancellation-before-reply deterministic. It also records query
+count and exposes completion to the test. The large, narrow and search cases
+return 100000 synthetic filenames; empty and error exercise failed/empty replies
+and retry. The narrow case uses a 24-column PTY. The search case types a regex
+before releasing the reply, without pressing Enter, then waits for the matching
+filename to appear. Console round trips verify focus after cancellation.
+
+This is a functional test, not a real-GDB enumeration benchmark. Its reported
+opening latency includes polling and deliberate input-drain waits. Use
+source-list-fixture.py with source-dialog.exp for a real debug-info fixture;
+source-list.cpp checks parsing and freeing 100000 MI source records.
+
+Controlled ablations (2026-11-11, isolated Arch Linux build)
+---------------------------------------------------------
+Each variant below removes only one behavior from the complete implementation.
+Build and run the indicated case after each change, then restore the original
+source. All five variants failed for the intended reason; after restoration,
+all five cases passed again.
+
+Variant                         Case     Observed failure
+------------------------------  -------  -------------------------------------
+Unclamped heading length        narrow   Loading heading absent at 24 columns
+Unconditional focus on reply     large    Late reply reopened dialog
+Remove pending-query guard      large    Duplicate source query
+Omit failed-query callback      error    Loading never completed after error
+Ignore non-q input when loading search   Pending search did not match on arrival
+
+The production changes retain asynchronous search, request deduplication,
+late-reply focus protection, error completion and iterative MI-list freeing.
+Only the bounded heading rendering and adapted tests were taken from the
+Fedora branch. Normal-width headings remain centered; narrow headings are
+clipped without passing a negative column to curses.

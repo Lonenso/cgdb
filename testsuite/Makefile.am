@@ -1,7 +1,8 @@
 AUTOMAKE_OPTIONS = dejagnu
 EXTRA_DIST = kui.base config msys-stdout.cpp \
     native-windows.exp native-windows-ui.exp native-windows-startup.exp \
-    pty-regression.py native-windows.txt source-dialog.exp source-list-fixture.py
+    pty-regression.py native-windows.txt source-dialog.exp source-list-fixture.py \
+    source-dialog.py source-dialog.txt
 DEJATOOL = kui.base
 
 check_PROGRAMS = source-list

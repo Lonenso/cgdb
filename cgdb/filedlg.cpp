@@ -64,20 +64,18 @@ static int regex_direction;     /* Direction to search */
  */
 static void print_in_middle(SWINDOW *win, int line, int width, const char *string)
 {
-    int x, y;
+    int x;
     int j;
-    int length = strlen(string);
-
-    y = swin_getcury(win);
-    x = swin_getcurx(win);
-
-    x = (int) ((width - length) / 2);
+    if (width <= 0)
+        return;
+    int length = std::min(width, (int)strlen(string));
+    x = (width - length) / 2;
 
     swin_wmove(win, line, 0);
     for (j = 0; j < x; j++)
         swin_waddch(win, ' ');
 
-    swin_mvwprintw(win, line, x, "%s", string);
+    swin_mvwprintw(win, line, x, "%.*s", length, string);
 
     for (j = x + length; j < width; j++)
         swin_waddch(win, ' ');

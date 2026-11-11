@@ -269,6 +269,10 @@ static int filedlg_search_regex(struct filedlg *fd, const char *regex,
             char *file = fd->buf->files[line];
 
             ret = hl_regex_search(&fd->hlregex, file, regex, icase, &start, &end);
+            // An incomplete expression (for example, "[") is invalid for
+            // every filename. Do not recompile it for each remaining entry.
+            if (ret < 0)
+                break;
             if (ret > 0) {
                 /* Got a match */
                 fd->buf->sel_line = line;
